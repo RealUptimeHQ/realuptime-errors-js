@@ -1,0 +1,43 @@
+{
+  "name": "@realuptime/errors",
+  "version": "0.2.0",
+  "description": "Zero-dependency error tracking SDK for JavaScript and Node (RealUptime Errors).",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "client.ts",
+    "buffer.ts",
+    "scrub.ts",
+    "types.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "homepage": "https://realuptime.io/error-tracking",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RealUptimeHQ/realuptime-errors-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RealUptimeHQ/realuptime-errors-js/issues"
+  },
+  "dependencies": {},
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
