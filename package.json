@@ -3,16 +3,17 @@
   "version": "0.2.0",
   "description": "Zero-dependency error tracking SDK for JavaScript and Node (RealUptime Errors).",
   "type": "module",
-  "main": "./index.ts",
-  "types": "./index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./index.ts",
-      "import": "./index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
+    "dist",
     "index.ts",
     "client.ts",
     "buffer.ts",

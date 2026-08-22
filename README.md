@@ -65,6 +65,15 @@ WSGI/ASGI equivalents live in the Python SDK,
 | `allowFields` | `string[]?` | `[]` | Lower-cased header/field names to opt back into capture. |
 | `captureUnhandled` | `boolean` | `true` | Installs process/window handlers for uncaught exceptions and rejections. |
 
+## Source and build
+
+`index.ts`, `client.ts`, `buffer.ts`, `scrub.ts`, and `types.ts` are the
+real, tested source (see the `.test.ts` files beside them). `dist/` is a
+plain compile of that source (TypeScript's own compiler, no bundler, ES2022
+modules, declarations included) and is what `package.json` actually points
+`import`/`types` at, so a plain `npm install` plus `import` works with no
+extra build step or type-stripping flag on the consumer's side.
+
 ## Version
 
 This mirror tracks SDK_VERSION `0.2.0` in `index.ts`, the string every
