@@ -18,22 +18,37 @@
  *   5. Long base64-ish runs (40+, no slash -- file paths stay readable).
  *
  * Scrubbed strings: the message, every request header value, the request
- * path, every breadcrumb message and breadcrumb data value (Phase 3), and
- * any source-context lines a frame carries (a hardcoded secret in source
- * code must not ride a stack trace). NOT scrubbed: frame file paths,
- * function names and line/column numbers (they are the product),
- * exceptionType, release, environment.
+ * path and route, every breadcrumb message and breadcrumb data value
+ * (Phase 3), any source-context lines a frame carries (a hardcoded secret
+ * in source code must not ride a stack trace), and every v2 field a
+ * customer can put their own bytes in -- the user id, every tag value,
+ * every custom-context value, every device value, and every captured local
+ * variable. NOT scrubbed: frame file paths, function names and line/column
+ * numbers (they are the product), exceptionType, release, environment, and
+ * tag/context KEYS (a key is a label the integrator chose, and scrubbing it
+ * would make an issue's tag filter depend on whether the value beside it
+ * happened to look like a card number).
  *
- * Header REMOVAL (value replaced whole): Authorization,
- * Proxy-Authorization, Cookie, Set-Cookie, case-insensitive.
- * `allowFields` opts a header back in BY LOWERCASED NAME, per field and
- * explicit in code, never a global switch -- and an allowed field's value
- * still passes the pattern scrub, so opting a header back in can never
- * smuggle a raw token through.
+ * REMOVAL (value replaced whole) unless the field is allow-listed:
+ *
+ *   - Headers: Authorization, Proxy-Authorization, Cookie, Set-Cookie,
+ *     case-insensitive, allow-listed by lowercased header name.
+ *   - Identity (v2, REA-182): `user.email` and `user.username`, allow-listed
+ *     by those exact dotted names. `user.id` is NOT removed: an opaque
+ *     identifier in the customer's own key space is the field that makes
+ *     "how many users hit this" answerable, and it is not contact data.
+ *
+ * `allowFields` opts a field back in BY NAME, per field and explicit in
+ * code, never a global switch -- and an allowed field's value still passes
+ * the pattern scrub, so opting one back in can never smuggle a raw token
+ * through.
  */
 export const SCRUBBED = "[scrubbed]";
 /** Headers whose value is removed whole unless the field is allow-listed. */
 const REMOVED_HEADERS = new Set(["authorization", "proxy-authorization", "cookie", "set-cookie"]);
+/** Identity fields removed whole unless allow-listed by these exact names.
+ * `user.id` is deliberately absent: see the module doc. */
+export const REMOVED_USER_FIELDS = ["user.email", "user.username"];
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g;
 const PREFIXED_KEY_RE = /\b(?:sk|pk|rk|ghp|gho|ghs|xox[a-z]|rua|rue|ru_live)_[A-Za-z0-9_-]{8,}/g;
 const CARD_RE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g;
@@ -71,6 +86,8 @@ function scrubRequest(request, allowFields) {
     const out = { ...request };
     if (typeof out.path === "string")
         out.path = scrubString(out.path);
+    if (typeof out.route === "string")
+        out.route = scrubString(out.route);
     if (out.headers) {
         const headers = {};
         for (const [name, value] of Object.entries(out.headers)) {
@@ -95,8 +112,40 @@ function scrubBreadcrumb(crumb) {
     }
     return { ...crumb, message: scrubString(crumb.message), data };
 }
+/** v2: identity. `id` passes the pattern rules; `email` and `username` are
+ * removed whole unless the customer opted that exact dotted name in. An
+ * opted-in value still passes the pattern rules. */
+function scrubUser(user, allowFields) {
+    const out = { ...user };
+    if (typeof out.id === "string")
+        out.id = scrubString(out.id);
+    for (const field of REMOVED_USER_FIELDS) {
+        const key = field.slice("user.".length);
+        const value = out[key];
+        if (typeof value !== "string")
+            continue;
+        out[key] = allowFields.has(field) ? scrubString(value) : SCRUBBED;
+    }
+    return out;
+}
+/** v2: a flat string map (tags, custom context, device, frame locals).
+ * Values pass the pattern rules; keys are left alone (see the module doc). */
+function scrubStringMap(map) {
+    const out = {};
+    for (const [name, value] of Object.entries(map)) {
+        out[name] = typeof value === "string" ? scrubString(value) : value;
+    }
+    return out;
+}
+function scrubDevice(device) {
+    return scrubStringMap(device);
+}
 /** Scrubs one event. Returns a new object; the input is never mutated (the
- * caller may still be holding it, e.g. inside an exception handler). */
+ * caller may still be holding it, e.g. inside an exception handler).
+ *
+ * v2 fields are touched only when PRESENT: a v1 event goes through here and
+ * comes out with exactly the v1 key set it went in with, which is what
+ * makes the vector table's v1 expectations still hold byte-for-byte. */
 export function scrubEvent(event, allowFields = []) {
     const allowed = new Set(allowFields.map((f) => f.toLowerCase()));
     return {
@@ -105,14 +154,19 @@ export function scrubEvent(event, allowFields = []) {
         request: event.request ? scrubRequest(event.request, allowed) : event.request,
         breadcrumbs: event.breadcrumbs ? event.breadcrumbs.map(scrubBreadcrumb) : event.breadcrumbs,
         frames: event.frames
-            ? event.frames.map((frame) => frame.contextLine != null || frame.preContext?.length || frame.postContext?.length
+            ? event.frames.map((frame) => frame.contextLine != null || frame.preContext?.length || frame.postContext?.length || frame.vars
                 ? {
                     ...frame,
                     ...(frame.contextLine != null ? { contextLine: scrubString(frame.contextLine) } : {}),
                     ...(frame.preContext ? { preContext: frame.preContext.map(scrubString) } : {}),
                     ...(frame.postContext ? { postContext: frame.postContext.map(scrubString) } : {}),
+                    ...(frame.vars ? { vars: scrubStringMap(frame.vars) } : {}),
                 }
                 : frame)
             : event.frames,
+        ...(event.user ? { user: scrubUser(event.user, allowed) } : {}),
+        ...(event.tags ? { tags: scrubStringMap(event.tags) } : {}),
+        ...(event.context ? { context: scrubStringMap(event.context) } : {}),
+        ...(event.device ? { device: scrubDevice(event.device) } : {}),
     };
 }

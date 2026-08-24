@@ -1,6 +1,8 @@
 import { Transport } from "./client.js";
+import { closeReportDialog, createFeedbackTransport, feedbackEndpointFor, isEventId, isReportDialogOpen, mintEventId, openReportDialog, } from "./feedback.js";
 import { scrubEvent } from "./scrub.js";
-import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_FRAMES_PER_EVENT, MAX_MESSAGE_LENGTH, MAX_STRING_LENGTH, } from "./types.js";
+import { applyCustomScrubRules, compileCustomScrubRules, NO_CUSTOM_SCRUB_RULES, scrubRulesUrlFor, } from "./custom-scrub.js";
+import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_CONTEXT_ENTRIES, MAX_CONTEXT_KEY_LENGTH, MAX_FRAMES_PER_EVENT, MAX_MESSAGE_LENGTH, MAX_STRING_LENGTH, MAX_TAGS_PER_EVENT, } from "./types.js";
 /**
  * @realuptime/errors: minimal JS/Node error tracking SDK, Phase 1
  * (docs/errors-plan.md). Captures unhandled exceptions and rejections plus
@@ -13,7 +15,10 @@ import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_FRAMES_PER_
  * none.
  */
 export const SDK_NAME = "realuptime-errors-js";
-export const SDK_VERSION = "0.2.0";
+export const SDK_VERSION = "0.4.0";
+/** How long the one-time rules fetch may take before the SDK stops waiting
+ * for it (it was never blocking capture anyway). */
+export const SCRUB_RULES_TIMEOUT_MS = 5_000;
 let state = null;
 let initFailureLogged = false;
 function safeLog(message) {
@@ -61,8 +66,162 @@ export function parseStack(stack) {
     }
     return frames.length > 0 ? frames : null;
 }
+/** Bounds one caller-supplied string map: keys and values clipped, entries
+ * past `max` dropped. Applied at WRITE time (setTag/setContext, and the
+ * per-capture overrides) rather than at send time so the sticky scope of a
+ * long-lived process is bounded by construction. */
+function boundedMap(input, max, valueMax = MAX_STRING_LENGTH) {
+    const out = {};
+    for (const [name, value] of Object.entries(input)) {
+        if (Object.keys(out).length >= max)
+            break;
+        if (typeof value !== "string" || typeof name !== "string" || !name)
+            continue;
+        out[clip(name, MAX_CONTEXT_KEY_LENGTH)] = clip(value, valueMax);
+    }
+    return out;
+}
+/** Reads the runtime facts out of this process. Node only for now: a
+ * browser's navigator.userAgent is a fingerprinting surface and a lie in
+ * equal measure, so the browser build reports nothing rather than
+ * something. Never throws; unknown fields are simply absent. */
+function detectDevice() {
+    try {
+        const proc = globalThis.process;
+        if (!proc?.versions?.node)
+            return null;
+        const device = { runtime: "node", runtimeVersion: clip(proc.versions.node, MAX_STRING_LENGTH) };
+        if (typeof proc.platform === "string")
+            device.platform = clip(proc.platform, MAX_STRING_LENGTH);
+        if (typeof proc.arch === "string")
+            device.arch = clip(proc.arch, MAX_STRING_LENGTH);
+        return device;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * v2 (REA-182): sets the sticky identity applied to every subsequent event.
+ * `null` clears it (sign-out).
+ *
+ * Only `id`, `email` and `username` are carried; anything else on the object
+ * is ignored rather than forwarded, so a caller who hands us their whole
+ * user record does not accidentally ship its address book. `email` and
+ * `username` are `[scrubbed]` before serialization unless the matching
+ * `allowFields` entry is set. Never throws.
+ */
+export function setUser(user) {
+    try {
+        if (!state)
+            return;
+        if (user === null || typeof user !== "object") {
+            state.user = null;
+            return;
+        }
+        const next = {};
+        if (typeof user.id === "string")
+            next.id = clip(user.id, MAX_STRING_LENGTH);
+        if (typeof user.email === "string")
+            next.email = clip(user.email, MAX_STRING_LENGTH);
+        if (typeof user.username === "string")
+            next.username = clip(user.username, MAX_STRING_LENGTH);
+        state.user = Object.keys(next).length > 0 ? next : null;
+    }
+    catch (failure) {
+        safeLog(`setUser failed: ${String(failure)}`);
+    }
+}
+/** v2: sets one sticky tag. A null/undefined value removes it. Tags past
+ * MAX_TAGS_PER_EVENT are ignored rather than evicting an existing one --
+ * silently replacing what the integrator set earlier would be the worse
+ * surprise. Never throws. */
+export function setTag(key, value) {
+    try {
+        if (!state || typeof key !== "string" || !key)
+            return;
+        const name = clip(key, MAX_CONTEXT_KEY_LENGTH);
+        if (value === null || value === undefined) {
+            delete state.tags[name];
+            return;
+        }
+        if (typeof value !== "string")
+            return;
+        if (!(name in state.tags) && Object.keys(state.tags).length >= MAX_TAGS_PER_EVENT)
+            return;
+        state.tags[name] = clip(value, MAX_STRING_LENGTH);
+    }
+    catch (failure) {
+        safeLog(`setTag failed: ${String(failure)}`);
+    }
+}
+/** v2: merges several sticky tags at once. Never throws. */
+export function setTags(tags) {
+    try {
+        if (!state || typeof tags !== "object" || tags === null)
+            return;
+        for (const [name, value] of Object.entries(tags))
+            setTag(name, value);
+    }
+    catch (failure) {
+        safeLog(`setTags failed: ${String(failure)}`);
+    }
+}
+/**
+ * v2: sets one sticky custom-context entry, or merges a whole map.
+ *
+ *   setContext("tenant", "acme");
+ *   setContext({ tenant: "acme", shard: "eu-1" });
+ *
+ * A null/undefined value removes the named entry; passing null as the only
+ * argument clears the whole context. Never throws.
+ */
+export function setContext(keyOrMap, value) {
+    try {
+        if (!state)
+            return;
+        if (keyOrMap === null) {
+            state.context = {};
+            return;
+        }
+        if (typeof keyOrMap === "object") {
+            const bounded = boundedMap(keyOrMap, MAX_CONTEXT_ENTRIES);
+            for (const [name, entry] of Object.entries(bounded)) {
+                if (!(name in state.context) && Object.keys(state.context).length >= MAX_CONTEXT_ENTRIES)
+                    break;
+                state.context[name] = entry;
+            }
+            return;
+        }
+        if (typeof keyOrMap !== "string" || !keyOrMap)
+            return;
+        const name = clip(keyOrMap, MAX_CONTEXT_KEY_LENGTH);
+        if (value === null || value === undefined) {
+            delete state.context[name];
+            return;
+        }
+        if (typeof value !== "string")
+            return;
+        if (!(name in state.context) && Object.keys(state.context).length >= MAX_CONTEXT_ENTRIES)
+            return;
+        state.context[name] = clip(value, MAX_STRING_LENGTH);
+    }
+    catch (failure) {
+        safeLog(`setContext failed: ${String(failure)}`);
+    }
+}
 function buildEvent(message, exceptionType, stack, context) {
     const options = state?.options;
+    // v2 scope: the sticky values, with this capture's overrides merged over
+    // the top. Emitted only when non-empty, so an integration that never
+    // touches the v2 API keeps producing byte-identical v1 payloads.
+    const tags = { ...(state?.tags ?? {}), ...boundedMap(context.tags ?? {}, MAX_TAGS_PER_EVENT) };
+    const custom = { ...(state?.context ?? {}), ...boundedMap(context.context ?? {}, MAX_CONTEXT_ENTRIES) };
+    const user = context.user === null
+        ? null
+        : context.user
+            ? { ...(state?.user ?? {}), ...context.user }
+            : (state?.user ?? null);
     return {
         occurredAt: new Date(state?.options.now?.() ?? Date.now()).toISOString(),
         message: clip(message, MAX_MESSAGE_LENGTH),
@@ -74,6 +233,13 @@ function buildEvent(message, exceptionType, stack, context) {
         fingerprint: context.fingerprint ?? null,
         breadcrumbs: state && state.breadcrumbs.length > 0 ? [...state.breadcrumbs] : null,
         breadcrumbsDropped: state?.breadcrumbsEvicted ?? 0,
+        ...(user ? { user } : {}),
+        ...(Object.keys(tags).length > 0 ? { tags } : {}),
+        ...(Object.keys(custom).length > 0 ? { context: custom } : {}),
+        ...(state?.device ? { device: state.device } : {}),
+        // REA-257: minted only when feedback is enabled, so an integration that
+        // never opted in keeps emitting the id-less payload it always did.
+        ...(state?.feedback ? { eventId: mintEventId() } : {}),
     };
 }
 /**
@@ -112,41 +278,127 @@ export function addBreadcrumb(input) {
 }
 function capture(event) {
     if (!state)
-        return;
-    state.transport.enqueue(scrubEvent(event, state.options.allowFields ?? []));
+        return null;
+    // Defaults first, always; the customer's additional rules on the result.
+    const scrubbed = scrubEvent(event, state.options.allowFields ?? []);
+    state.transport.enqueue(applyCustomScrubRules(scrubbed, state.customScrub));
+    if (event.eventId)
+        state.lastEventId = event.eventId;
+    return event.eventId ?? null;
+}
+/** Fetches the project's additional scrub rules by ingest key and merges
+ * them over the inline ones. Best-effort, bounded, never throws, never
+ * blocks capture: an event sent before the response lands gets the
+ * defaults plus inline rules here and the project's rules at ingest. */
+async function fetchScrubRules(forState) {
+    try {
+        const url = scrubRulesUrlFor(forState.options.dsn);
+        if (!url)
+            return;
+        const fetchImpl = forState.options.fetchImpl ?? fetch;
+        const response = await fetchImpl(url, { method: "GET", signal: AbortSignal.timeout(SCRUB_RULES_TIMEOUT_MS) });
+        if (!response.ok)
+            return;
+        const body = (await response.json());
+        if (!Array.isArray(body?.rules))
+            return;
+        // Init may have been called again while this was in flight; only the
+        // state this fetch was started for is updated.
+        if (state !== forState)
+            return;
+        forState.customScrub = compileCustomScrubRules([...(forState.options.scrubRules ?? []), ...body.rules]);
+    }
+    catch {
+        // Fail open to the defaults. Silent by design: a transient fetch miss
+        // is not the integrator's problem, and the server still applies them.
+    }
 }
 /** Reports a thrown value. Non-Error values are stringified honestly rather
- * than wrapped in a fake stack. */
+ * than wrapped in a fake stack.
+ *
+ * Returns the event's client id when feedback is enabled (REA-257), so the
+ * caller can hand it to `showReportDialog({ eventId })`; null otherwise.
+ * Additive: every pre-existing caller ignored the `void` this returned. */
 export function captureException(error, context = {}) {
     try {
         if (!state)
-            return;
+            return null;
         if (error instanceof Error) {
-            capture(buildEvent(error.message || error.name, error.name || "Error", error.stack, context));
+            return capture(buildEvent(error.message || error.name, error.name || "Error", error.stack, context));
         }
-        else {
-            capture(buildEvent(String(error), null, undefined, context));
-        }
+        return capture(buildEvent(String(error), null, undefined, context));
     }
     catch (failure) {
         safeLog(`captureException failed: ${String(failure)}`);
+        return null;
     }
 }
 export function captureMessage(message, context = {}) {
     try {
         if (!state)
-            return;
-        capture(buildEvent(message, null, undefined, context));
+            return null;
+        return capture(buildEvent(message, null, undefined, context));
     }
     catch (failure) {
         safeLog(`captureMessage failed: ${String(failure)}`);
+        return null;
+    }
+}
+/** REA-257: the client id of the most recently captured event, or null
+ * when none was captured yet or feedback is not enabled. */
+export function lastEventId() {
+    return state?.lastEventId ?? null;
+}
+/**
+ * REA-257: opens the user feedback dialog for one event (default: the last
+ * captured one). Browser only; returns null and logs once anywhere else,
+ * when feedback was not enabled in `init`, when there is no event to attach
+ * to, or when a dialog is already open. Never throws.
+ *
+ *   const eventId = captureException(err);
+ *   showReportDialog({ eventId });
+ */
+export function showReportDialog(options = {}) {
+    try {
+        if (!state)
+            return null;
+        if (!state.feedback) {
+            safeLog("showReportDialog called but feedback is not enabled; pass init({ feedback: {} }) to turn it on.");
+            return null;
+        }
+        const doc = globalThis.document;
+        if (!doc?.body)
+            return null;
+        const eventId = options.eventId ?? state.lastEventId;
+        if (!isEventId(eventId)) {
+            safeLog("showReportDialog: no event to attach to (capture one first, or pass eventId).");
+            return null;
+        }
+        if (isReportDialogOpen())
+            return null;
+        const { autoShow: _autoShow, ...standing } = state.feedback.options;
+        const current = state;
+        return openReportDialog({ ...standing, ...options, eventId }, {
+            document: doc,
+            transport: state.feedback.transport,
+            sdk: `${SDK_NAME}/${SDK_VERSION}`,
+            beforeSend: () => current.transport.flush(),
+            log: (message) => safeLog(message),
+        });
+    }
+    catch (failure) {
+        safeLog(`showReportDialog failed: ${String(failure)}`);
+        return null;
     }
 }
 function installUnhandledHandlers() {
     // Node first: process-level handlers see everything, including code that
-    // runs before any window exists.
+    // runs before any window exists. A runtime that has BOTH a process object
+    // and a DOM (an Electron renderer, a jsdom harness) is a page, and the
+    // window handlers are the ones that see its errors (REA-257).
     const proc = globalThis.process;
-    if (proc && typeof proc.on === "function") {
+    const hasDom = typeof globalThis.document?.createElement === "function";
+    if (!hasDom && proc && typeof proc.on === "function") {
         const onException = (error) => captureException(error);
         const onRejection = (reason) => captureException(reason);
         proc.on("uncaughtExceptionMonitor", onException);
@@ -158,8 +410,15 @@ function installUnhandledHandlers() {
     }
     const win = globalThis;
     if (typeof win.addEventListener === "function") {
-        const onError = (e) => captureException(e.error ?? e.message);
-        const onRejection = (e) => captureException(e.reason);
+        // REA-257: the opt-in auto-show. Only after an UNHANDLED browser
+        // exception, only when the integrator asked, and only when the event
+        // actually got an id (feedback enabled).
+        const maybeShow = (eventId) => {
+            if (eventId && state?.feedback?.options.autoShow)
+                showReportDialog({ eventId });
+        };
+        const onError = (e) => maybeShow(captureException(e.error ?? e.message));
+        const onRejection = (e) => maybeShow(captureException(e.reason));
         win.addEventListener("error", onError);
         win.addEventListener("unhandledrejection", onRejection);
         return () => {
@@ -193,10 +452,36 @@ export function init(options) {
             uninstall: null,
             breadcrumbs: [],
             breadcrumbsEvicted: 0,
+            user: null,
+            tags: {},
+            context: {},
+            device: options.sendDeviceInfo === false ? null : detectDevice(),
+            customScrub: options.scrubRules ? compileCustomScrubRules(options.scrubRules) : NO_CUSTOM_SCRUB_RULES,
+            feedback: null,
+            lastEventId: null,
         };
+        if (options.feedback && typeof options.feedback === "object") {
+            const endpoint = feedbackEndpointFor(options.dsn);
+            if (endpoint) {
+                state.feedback = {
+                    options: options.feedback,
+                    transport: createFeedbackTransport({
+                        endpoint,
+                        sdk: `${SDK_NAME}/${SDK_VERSION}`,
+                        fetchImpl: options.fetchImpl,
+                        log: options.log,
+                    }),
+                };
+            }
+            else {
+                safeLog("feedback enabled but the dsn is not an ingest URL; feedback is disabled.");
+            }
+        }
         if (options.captureUnhandled !== false) {
             state.uninstall = installUnhandledHandlers();
         }
+        if (options.fetchScrubRules !== false)
+            void fetchScrubRules(state);
     }
     catch (failure) {
         safeLog(`init failed: ${String(failure)}`);
@@ -217,6 +502,12 @@ export async function flush() {
 export function close() {
     try {
         state?.uninstall?.();
+    }
+    catch {
+        // Never throws.
+    }
+    try {
+        closeReportDialog();
     }
     catch {
         // Never throws.

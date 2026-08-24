@@ -1,6 +1,6 @@
 {
   "name": "@realuptime/errors",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Zero-dependency error tracking SDK for JavaScript and Node (RealUptime Errors).",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,6 +10,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./sourcemaps": {
+      "types": "./dist/sourcemaps.d.ts",
+      "import": "./dist/sourcemaps.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    },
+    "./webpack": {
+      "types": "./dist/webpack.d.ts",
+      "import": "./dist/webpack.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -18,7 +30,12 @@
     "client.ts",
     "buffer.ts",
     "scrub.ts",
+    "custom-scrub.ts",
     "types.ts",
+    "feedback.ts",
+    "sourcemaps.ts",
+    "vite.ts",
+    "webpack.ts",
     "README.md",
     "LICENSE"
   ],
@@ -38,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
+    "jsdom": "30.0.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   }

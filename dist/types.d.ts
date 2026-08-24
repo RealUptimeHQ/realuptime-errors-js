@@ -1,5 +1,5 @@
 /**
- * The Errors wire contract, v1 (docs/errors-plan.md, "The SDKs: two
+ * The Errors wire contract (docs/errors-plan.md, "The SDKs: two
  * languages, one contract").
  *
  * DUPLICATED, not imported. Same convention as apps/agent/types.ts and for
@@ -11,6 +11,25 @@
  * semantics across this SDK, the Python SDK, and the server's second net.
  * The server-side mirror of these limits lives in
  * packages/db/error-ingest.ts.
+ *
+ * ## v2 (REA-182): identity, tags, custom context, device metadata
+ *
+ * STRICTLY ADDITIVE, and that word is load-bearing rather than decorative.
+ * Every v1 field keeps its name, its type and its meaning; every v2 field is
+ * OPTIONAL and absent from a v1 payload. A v1 batch produced by an SDK that
+ * predates this file still ingests byte-for-byte unchanged, which
+ * route.test.ts pins with a frozen golden v1 body.
+ *
+ * **There is deliberately no `version` field on the wire, and that is a
+ * decision, not an omission.** A version discriminant would have to be
+ * REQUIRED to be worth reading, and a required field is by construction not
+ * additive: every already-deployed SDK in a customer's process omits it, so
+ * the server would have to treat "absent" as v1 anyway -- which is exactly
+ * what optional-field presence already tells it, with no field to keep in
+ * sync. The `sdk` string ("realuptime-errors-js/0.3.0") remains the honest
+ * record of what produced a payload. A future change that is NOT additive
+ * (a removed field, a changed meaning) gets a versioned PATH, the way the
+ * fingerprint algorithm gets a version rather than mutating history.
  */
 /** One stack frame, post-scrub. `inApp` is the SDK's best-effort guess
  * (Node: not under node_modules and not an internal frame); the server
@@ -29,6 +48,59 @@ export interface WireFrame {
     contextLine?: string | null;
     preContext?: string[];
     postContext?: string[];
+    /** v2 (REA-182): this frame's local variables, stringified.
+     *
+     * OFF BY DEFAULT in both SDKs and hard-capped when on
+     * (MAX_LOCAL_VARS_PER_FRAME entries, MAX_LOCAL_VAR_LENGTH characters
+     * each), because locals are the single leakiest thing an error tracker
+     * can capture: the variable holding the password is, definitionally, in
+     * scope at the frame that failed to use it. Values pass the pattern scrub
+     * like every other captured string, but the pattern scrub is a net, not a
+     * guarantee, which is why the switch defaults to off rather than to
+     * "trust the regexes".
+     *
+     * Captured by the Python SDK only, the same asymmetry `contextLine`
+     * already has: a JS stack is a STRING, and the runtime hands the SDK no
+     * access to the frames behind it. The field is in the contract on both
+     * sides so the scrub, the storage and the UI are one implementation. */
+    vars?: Record<string, string> | null;
+}
+/** v2 (REA-182): who this happened to.
+ *
+ * `id` is the field the product is built around: an opaque account or user
+ * identifier is what makes "how many users hit this" answerable, and it is
+ * the customer's own key space, not a person's contact details. It rides
+ * the wire as-is (pattern-scrubbed like any other string).
+ *
+ * `email` and `username` are PERSONAL DATA and are `[scrubbed]` by default,
+ * client-side, before serialization. A customer who genuinely needs them
+ * opts each one back in BY NAME in SDK config (`allowFields: ["user.email"]`)
+ * -- the same per-field, in-code, never-a-global-switch shape the removed
+ * headers use, and for the same reason: a one-switch opt-out is how a
+ * default dies. There is no server-side way to turn this on, deliberately:
+ * a default that a dashboard toggle can disable is a default that leaks
+ * before anyone notices. */
+export interface WireUser {
+    id?: string | null;
+    email?: string | null;
+    username?: string | null;
+}
+/** v2 (REA-182): where it ran. Runtime and platform facts the SDK reads out
+ * of its own process, never out of the request.
+ *
+ * Deliberately NOT here: hostname, local IP, container id, or anything else
+ * that identifies a machine rather than a runtime. Those are operational
+ * identifiers with real re-identification value and no debugging value that
+ * `release` + `environment` does not already carry. */
+export interface WireDevice {
+    /** "node", "python", "browser". */
+    runtime?: string;
+    /** e.g. "22.4.0", "3.12.1". */
+    runtimeVersion?: string;
+    /** e.g. "linux", "darwin", "win32". */
+    platform?: string;
+    /** e.g. "x64", "arm64". */
+    arch?: string;
 }
 /** One breadcrumb (Phase 3): a scrubbed trail entry recorded before the
  * event. Newest last on the wire. */
@@ -48,6 +120,14 @@ export interface WireRequest {
     path?: string;
     status?: number;
     headers?: Record<string, string>;
+    /** v2 (REA-182): the matched ROUTE TEMPLATE, e.g. "/orders/:id", as
+     * distinct from the concrete path "/orders/4242". This is the one extra
+     * thing a framework adapter genuinely knows and cannot be guessed from
+     * the path, it is low-cardinality (it groups), and it carries no
+     * user-supplied bytes at all. Adapters forward it and nothing else new:
+     * never headers, never cookies, never bodies. Pattern-scrubbed anyway,
+     * because a route template is still a string a customer wrote. */
+    route?: string;
 }
 export interface WireEvent {
     /** ISO 8601, the customer process's clock. The server bounds it and never
@@ -70,6 +150,26 @@ export interface WireEvent {
      * reported so the server can render "showing the last N; M older
      * dropped" instead of a quietly truncated trail. */
     breadcrumbsDropped: number;
+    /** Who this happened to. See WireUser: id rides as-is, email and username
+     * are scrubbed unless opted in per field. */
+    user?: WireUser | null;
+    /** Short, low-cardinality labels the customer sets (`setTag`), the things
+     * an issues list can filter on: "tenant", "plan", "feature-flag". Values
+     * pass the pattern scrub. At most MAX_TAGS_PER_EVENT. */
+    tags?: Record<string, string> | null;
+    /** Free-form custom context the customer sets (`setContext`): the
+     * application state that makes an issue diagnosable and that no schema of
+     * ours could have anticipated. Values pass the pattern scrub. At most
+     * MAX_CONTEXT_ENTRIES. */
+    context?: Record<string, string> | null;
+    /** Runtime/platform metadata the SDK reads from its own process. */
+    device?: WireDevice | null;
+    /** REA-257: a client-minted UUID for this event, present ONLY when the
+     * integration opted into user feedback (`init({ feedback: {...} })`). It
+     * is what a later `POST /api/errors/v1/feedback/<key>` names to attach a
+     * user's report to this exact occurrence. An integration that never
+     * enables feedback keeps emitting the id-less payload it always did. */
+    eventId?: string;
 }
 export interface WireBatch {
     /** e.g. "realuptime-errors-js/0.1.0" */
@@ -96,11 +196,55 @@ export interface WireIngestResult {
     };
 }
 /** Machine-readable refusal reasons the SDK understands. Anything else is
- * treated as transient. */
-export type WireRefusalReason = "over_quota" | "rate_limited" | "key_revoked" | "malformed";
+ * treated as transient.
+ *
+ * `oversize_context` (v2, RU-4009) is a 400 like `malformed`, and both SDKs
+ * already handle every 400 the same way -- drop the batch, log once, never
+ * retry -- so it needs no new client branch. It is a SEPARATE reason string
+ * because "your event carried 500 tags" and "your event was not valid JSON"
+ * are different bugs in the customer's integration, and telling them apart
+ * costs one string. */
+export type WireRefusalReason = "over_quota" | "rate_limited" | "key_revoked" | "malformed" | "oversize_context";
 export declare const MAX_EVENTS_PER_BATCH = 50;
 export declare const MAX_MESSAGE_LENGTH = 4000;
 export declare const MAX_FRAMES_PER_EVENT = 50;
 export declare const MAX_STRING_LENGTH = 512;
 export declare const MAX_BREADCRUMBS_PER_EVENT = 20;
 export declare const MAX_BREADCRUMB_DATA_ENTRIES = 10;
+/** Tags per event kept; extras are dropped and counted. */
+export declare const MAX_TAGS_PER_EVENT = 20;
+/** Custom-context entries per event kept; extras are dropped and counted. */
+export declare const MAX_CONTEXT_ENTRIES = 20;
+/** Tag and context KEY length. Shorter than MAX_STRING_LENGTH because a key
+ * is a label, not a payload; a 512-character key is a value in disguise. */
+export declare const MAX_CONTEXT_KEY_LENGTH = 64;
+/** Local variables kept per frame when the (off-by-default) capture is on. */
+export declare const MAX_LOCAL_VARS_PER_FRAME = 20;
+/** Per-value cap for a local variable, tighter than MAX_STRING_LENGTH: a
+ * local is captured for its shape, not its contents. */
+export declare const MAX_LOCAL_VAR_LENGTH = 256;
+/** Combined serialized budget for user + tags + context + device on ONE
+ * event, enforced server-side inside the ingest transaction. Entries past
+ * it are dropped and counted, same honesty rule as the soft caps. */
+export declare const MAX_CONTEXT_BYTES = 4096;
+/** The refusal boundary: more entries than this in any one map is a bug in
+ * the caller, not an over-eager integration. */
+export declare const HARD_MAX_MAP_ENTRIES = 200;
+/** `POST /api/errors/v1/feedback/<key>` body. */
+export interface WireFeedback {
+    /** The client-minted event id the report attaches to (WireEvent.eventId). */
+    eventId: string;
+    /** What the user typed. Scrubbed client-side before serialization. */
+    comments: string;
+    /** Optional, only sent when the dialog showed the field and the user
+     * filled it. Scrubbed by the same pattern rules. */
+    name?: string;
+    email?: string;
+    /** e.g. "realuptime-errors-js/0.4.0" */
+    sdk: string;
+}
+export declare const MAX_FEEDBACK_COMMENTS_LENGTH = 4000;
+export declare const MAX_FEEDBACK_NAME_LENGTH = 200;
+export declare const MAX_FEEDBACK_EMAIL_LENGTH = 254;
+/** Body size ceiling the server enforces on the feedback endpoint. */
+export declare const MAX_FEEDBACK_BODY_BYTES = 16384;

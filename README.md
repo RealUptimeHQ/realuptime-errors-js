@@ -11,7 +11,7 @@ they merge upstream.
 
 ## Install
 
-Installs straight from GitHub today. npm and PyPI packages are coming; this note disappears the day they ship.
+Installs straight from GitHub today. npm, PyPI, RubyGems, and Packagist packages are coming; this note disappears the day they ship.
 
 ```bash
 npm install github:RealUptimeHQ/realuptime-errors-js
@@ -33,6 +33,32 @@ realuptimeErrors.captureException(someError);
 
 WSGI/ASGI equivalents live in the Python SDK,
 [realuptime-errors-py](https://github.com/RealUptimeHQ/realuptime-errors-py).
+
+## Source maps (Vite / webpack plugins)
+
+Upload the `.map` files a production build writes, for the release your
+app reports at runtime, so minified JS frames symbolicate on the issue page.
+Both plugins read the maps the bundler already wrote and POST them to your
+project's source-map endpoint (authenticated by the DSN, the one secret CI
+already has). They change nothing in the build output.
+
+```js
+// vite.config.js
+import { realuptimeSourcemaps } from "@realuptime/errors/vite";
+export default {
+  build: { sourcemap: true },
+  plugins: [realuptimeSourcemaps({ release: process.env.GITHUB_SHA, dsn: process.env.REALUPTIME_ERRORS_DSN })],
+};
+
+// webpack.config.js
+const { RealuptimeSourcemapsPlugin } = require("@realuptime/errors/webpack");
+module.exports = { devtool: "source-map", plugins: [new RealuptimeSourcemapsPlugin({ release: process.env.GITHUB_SHA })] };
+```
+
+An upload failure is logged with the server's own message and the build
+still succeeds; pass `failOnError: true` to fail the build instead. With no
+DSN set (local builds) the plugin logs one line and uploads nothing. Limits:
+2MB per map, 50 maps per release, 10 files per request (batched for you).
 
 ## What this SDK actually does
 
@@ -67,8 +93,8 @@ WSGI/ASGI equivalents live in the Python SDK,
 
 ## Source and build
 
-`index.ts`, `client.ts`, `buffer.ts`, `scrub.ts`, and `types.ts` are the
-real, tested source (see the `.test.ts` files beside them). `dist/` is a
+`index.ts`, `client.ts`, `buffer.ts`, `scrub.ts`, `custom-scrub.ts`, and
+`types.ts` are the real, tested source (see the `.test.ts` files beside them). `dist/` is a
 plain compile of that source (TypeScript's own compiler, no bundler, ES2022
 modules, declarations included) and is what `package.json` actually points
 `import`/`types` at, so a plain `npm install` plus `import` works with no
@@ -76,7 +102,7 @@ extra build step or type-stripping flag on the consumer's side.
 
 ## Version
 
-This mirror tracks SDK_VERSION `0.2.0` in `index.ts`, the string every
+This mirror tracks SDK_VERSION `0.4.0` in `index.ts`, the string every
 event actually carries on the wire.
 
 ## License
