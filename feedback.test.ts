@@ -7,9 +7,16 @@ import {
   isEventId,
   isReportDialogOpen,
   mintEventId,
-  openReportDialog,
 } from "./feedback.ts";
-import { captureException, captureMessage, close, flush, init, lastEventId, showReportDialog } from "./index.ts";
+import {
+  captureException,
+  captureMessage,
+  close,
+  flush,
+  init,
+  lastEventId,
+  showReportDialog,
+} from "./index.ts";
 import type { WireBatch, WireFeedback } from "./types.ts";
 
 /**
@@ -32,7 +39,12 @@ import type { WireBatch, WireFeedback } from "./types.ts";
 const DSN = "https://realuptime.io/api/errors/v1/ingest/rue_0123456789abcdef0123456789abcdef";
 const OK = () =>
   new Response(
-    JSON.stringify({ accepted: 1, droppedOverQuota: 0, overQuota: false, quota: { used: 1, limit: 10_000, resetsAt: "2026-09-01T00:00:00.000Z" } }),
+    JSON.stringify({
+      accepted: 1,
+      droppedOverQuota: 0,
+      overQuota: false,
+      quota: { used: 1, limit: 10_000, resetsAt: "2026-09-01T00:00:00.000Z" },
+    }),
     { status: 200 },
   );
 
@@ -46,7 +58,9 @@ function setup(feedback?: Record<string, unknown>, log = vi.fn()) {
     log,
     fetchImpl: vi.fn(async (url: string, opts: { body: string }) => {
       posts.push({ url, body: JSON.parse(opts.body) });
-      return url.includes("/feedback/") ? new Response(JSON.stringify({ accepted: true }), { status: 202 }) : OK();
+      return url.includes("/feedback/")
+        ? new Response(JSON.stringify({ accepted: true }), { status: 202 })
+        : OK();
     }) as unknown as typeof fetch,
   });
   return { posts, log };
@@ -141,7 +155,10 @@ describe("the dialog", () => {
     const setAttribute = vi.spyOn(Element.prototype, "setAttribute");
     const id = captureException(new Error("boom")) as string;
     const onSubmit = vi.fn();
-    const handle = showReportDialog({ onSubmit, fields: { email: { value: "alice@example.com" } } });
+    const handle = showReportDialog({
+      onSubmit,
+      fields: { email: { value: "alice@example.com" } },
+    });
     expect(handle).not.toBeNull();
     expect(isReportDialogOpen()).toBe(true);
 
@@ -156,7 +173,9 @@ describe("the dialog", () => {
     }
     // Focus moved into the dialog.
     expect(dialog?.contains(document.activeElement)).toBe(true);
-    expect(setAttribute.mock.calls.some(([name]) => String(name).toLowerCase() === "style")).toBe(false);
+    expect(setAttribute.mock.calls.some(([name]) => String(name).toLowerCase() === "style")).toBe(
+      false,
+    );
     expect(document.querySelectorAll("style").length).toBe(0);
     // ...but the CSSOM was used.
     expect(dialog?.style.getPropertyValue("background")).not.toBe("");
@@ -171,7 +190,9 @@ describe("the dialog", () => {
     await vi.waitFor(() => expect(posts.some((p) => p.url.includes("/feedback/"))).toBe(true));
 
     const post = posts.find((p) => p.url.includes("/feedback/"));
-    expect(post?.url).toBe("https://realuptime.io/api/errors/v1/feedback/rue_0123456789abcdef0123456789abcdef");
+    expect(post?.url).toBe(
+      "https://realuptime.io/api/errors/v1/feedback/rue_0123456789abcdef0123456789abcdef",
+    );
     const body = post?.body as WireFeedback;
     expect(body).toEqual({
       eventId: id,
@@ -181,7 +202,9 @@ describe("the dialog", () => {
     });
     // The event batch was flushed BEFORE the report (beforeSend), so the
     // report never outruns its event on the wire.
-    expect(posts.findIndex((p) => p.url.includes("/ingest/"))).toBeLessThan(posts.findIndex((p) => p.url.includes("/feedback/")));
+    expect(posts.findIndex((p) => p.url.includes("/ingest/"))).toBeLessThan(
+      posts.findIndex((p) => p.url.includes("/feedback/")),
+    );
 
     await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ eventId: id }));
     expect(document.querySelector("form.ru-feedback-form")).toBeNull();
@@ -221,8 +244,14 @@ describe("the dialog", () => {
     captureException(new Error("boom"));
     showReportDialog();
     expect(document.querySelector(".ru-feedback-title")?.textContent).toBe("Oops");
-    expect(document.querySelector<HTMLButtonElement>(".ru-feedback-submit")?.textContent).toBe("Send it");
-    expect(document.querySelector<HTMLButtonElement>(".ru-feedback-submit")?.style.getPropertyValue("background")).toBe("rgb(1, 2, 3)");
+    expect(document.querySelector<HTMLButtonElement>(".ru-feedback-submit")?.textContent).toBe(
+      "Send it",
+    );
+    expect(
+      document
+        .querySelector<HTMLButtonElement>(".ru-feedback-submit")
+        ?.style.getPropertyValue("background"),
+    ).toBe("rgb(1, 2, 3)");
   });
 
   it("shows the error copy and re-enables the form when delivery fails for good", async () => {
@@ -236,7 +265,9 @@ describe("the dialog", () => {
       fetchImpl: vi.fn(async (url: string) => {
         posts.push(url);
         if (url.includes("/feedback/")) {
-          return new Response(JSON.stringify({ error: "off", reason: "feedback_disabled" }), { status: 403 });
+          return new Response(JSON.stringify({ error: "off", reason: "feedback_disabled" }), {
+            status: 403,
+          });
         }
         return OK();
       }) as unknown as typeof fetch,
@@ -262,7 +293,13 @@ describe("auto-show", () => {
     window.addEventListener("error", swallow);
     try {
       const { posts } = setup({});
-      window.dispatchEvent(new ErrorEvent("error", { error: new Error("unhandled"), message: "unhandled", cancelable: true }));
+      window.dispatchEvent(
+        new ErrorEvent("error", {
+          error: new Error("unhandled"),
+          message: "unhandled",
+          cancelable: true,
+        }),
+      );
       await flush();
       // The window handler captured it (ids are minted: feedback is on)...
       expect((posts[0]?.body as WireBatch)?.events[0]?.eventId).toBeDefined();
@@ -271,7 +308,13 @@ describe("auto-show", () => {
       close();
 
       setup({ autoShow: true });
-      window.dispatchEvent(new ErrorEvent("error", { error: new Error("unhandled"), message: "unhandled", cancelable: true }));
+      window.dispatchEvent(
+        new ErrorEvent("error", {
+          error: new Error("unhandled"),
+          message: "unhandled",
+          cancelable: true,
+        }),
+      );
       expect(document.querySelector("[role=dialog]")).not.toBeNull();
     } finally {
       window.removeEventListener("error", swallow);
@@ -295,7 +338,9 @@ describe("the feedback transport", () => {
       wait: async () => {},
       fetchImpl: vi.fn(async () => {
         const status = statuses[calls++];
-        return new Response(JSON.stringify(status === 404 ? { reason: "event_not_found" } : {}), { status });
+        return new Response(JSON.stringify(status === 404 ? { reason: "event_not_found" } : {}), {
+          status,
+        });
       }) as unknown as typeof fetch,
     });
     expect(await transport.send({ eventId: "e", comments: "c", sdk: "s" })).toBe(true);

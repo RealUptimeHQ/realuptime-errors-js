@@ -3,7 +3,7 @@ import { MAX_EVENTS_PER_BATCH, type WireBatch, type WireEvent, type WireIngestRe
 
 /**
  * Delivery: batched, buffered, backed off, and incapable of crashing the
- * host app (docs/errors-plan.md, "The SDKs"). Disciplines inherited from
+ * host app (the internal-docs repo's errors-plan.md, "The SDKs"). Disciplines inherited from
  * apps/agent/api.ts and runtime.ts:
  *
  *   - Failures never throw out of the SDK. Everything is caught; the first
@@ -52,8 +52,16 @@ export class Transport {
   private loggedKinds = new Set<string>();
   private inFlight: Promise<void> | null = null;
 
-  constructor(private readonly options: TransportOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+  // Explicit fields, not parameter properties: strip-only TS mode (the
+  // probe runtime) cannot execute parameter properties.
+  private readonly options: TransportOptions;
+  constructor(options: TransportOptions) {
+    this.options = options;
+    // A bare `fetch` reference called as `this.fetchImpl(...)` loses its
+    // window binding and throws "Illegal invocation" in every browser (Node
+    // does not care, which is why server-side use and the mocked tests never
+    // saw it). Bind explicitly.
+    this.fetchImpl = options.fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
     this.now = options.now ?? Date.now;
     this.log = options.log ?? ((message) => console.error(message));
   }

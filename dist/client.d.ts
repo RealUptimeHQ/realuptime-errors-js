@@ -1,7 +1,7 @@
 import { type WireEvent } from "./types.ts";
 /**
  * Delivery: batched, buffered, backed off, and incapable of crashing the
- * host app (docs/errors-plan.md, "The SDKs"). Disciplines inherited from
+ * host app (the internal-docs repo's errors-plan.md, "The SDKs"). Disciplines inherited from
  * apps/agent/api.ts and runtime.ts:
  *
  *   - Failures never throw out of the SDK. Everything is caught; the first
@@ -30,7 +30,6 @@ export interface TransportOptions {
     log?: (message: string) => void;
 }
 export declare class Transport {
-    private readonly options;
     private readonly buffer;
     private readonly fetchImpl;
     private readonly now;
@@ -41,6 +40,7 @@ export declare class Transport {
     private disabled;
     private loggedKinds;
     private inFlight;
+    private readonly options;
     constructor(options: TransportOptions);
     enqueue(event: WireEvent): void;
     /** Sends what is due. Serialized: one delivery in flight at a time, so a

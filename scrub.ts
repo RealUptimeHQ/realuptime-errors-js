@@ -1,7 +1,7 @@
 import type { WireBreadcrumb, WireDevice, WireEvent, WireRequest, WireUser } from "./types.ts";
 
 /**
- * PII scrub-by-default, client-side (docs/errors-plan.md, "PII
+ * PII scrub-by-default, client-side (the internal-docs repo's errors-plan.md, "PII
  * scrub-by-default, specified"). Runs BEFORE serialization so the sensitive
  * value never transits realuptime's wire; the server runs the same rules
  * again as a second net (packages/db/error-scrub.ts), and the shared
@@ -10,14 +10,31 @@ import type { WireBreadcrumb, WireDevice, WireEvent, WireRequest, WireUser } fro
  *
  * The rules, in the order they run over every scrubbed string:
  *
+ *   0. URL userinfo credentials (`scheme://user:pass@host`, REA-474): the
+ *      userinfo is replaced whole; the host stays readable. Runs first so a
+ *      password that happens to look hex- or base64-shaped is not partially
+ *      eaten by a later rule before the URL rule can see the whole userinfo.
  *   1. JWT three-dot shape (`eyJ...` header, two more base64url segments).
- *   2. Prefixed keys: sk_/pk_/rk_/ghp_/gho_/ghs_/xox?_/rua_/rue_/ru_live_
- *      followed by 8+ token characters.
+ *   2. Prefixed keys: sk_/pk_/rk_/ghp_/gho_/ghs_/xox?_/rua_/rue_/ru_live_/
+ *      whsec_ (REA-474) followed by 8+ token characters.
+ *   2b. AWS access-key ids (REA-474): AKIA/ASIA followed by exactly 16
+ *      uppercase-alnum characters.
  *   3. Card-shaped digit runs: 13-19 digits, optional space/dash
  *      separators, passing Luhn. A digit run that fails Luhn is an order
  *      id, not a card, and stays.
  *   4. Long hex runs (32+).
  *   5. Long base64-ish runs (40+, no slash -- file paths stay readable).
+ *
+ * BEFORE any of the above, a KEY-NAME denylist pass (REA-474) runs over
+ * every flat string map (tags, custom context, device, breadcrumb data,
+ * stack-frame locals) and over request headers: a key whose name -- read as
+ * whole snake_case/camelCase segments, so "tokenizer" and "authentic" do
+ * NOT match "token" and "auth" -- is password, passwd, secret, token,
+ * api_key/apikey, auth, authorization, credential(s), private_key,
+ * access_key, or session, has its value replaced whole regardless of shape.
+ * For headers this is folded into the existing REMOVED_HEADERS check (same
+ * allowFields opt-back-in); for the other maps it is unconditional, the
+ * same as the maps' key set itself.
  *
  * Scrubbed strings: the message, every request header value, the request
  * path and route, every breadcrumb message and breadcrumb data value
@@ -55,11 +72,59 @@ const REMOVED_HEADERS = new Set(["authorization", "proxy-authorization", "cookie
  * `user.id` is deliberately absent: see the module doc. */
 export const REMOVED_USER_FIELDS = ["user.email", "user.username"] as const;
 
+const URL_CREDS_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^\s/@]+:[^\s/@]+@/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g;
-const PREFIXED_KEY_RE = /\b(?:sk|pk|rk|ghp|gho|ghs|xox[a-z]|rua|rue|ru_live)_[A-Za-z0-9_-]{8,}/g;
+const PREFIXED_KEY_RE = /\b(?:sk|pk|rk|ghp|gho|ghs|xox[a-z]|rua|rue|ru_live|whsec)_[A-Za-z0-9_-]{8,}/g;
+const AWS_KEY_RE = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
 const CARD_RE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g;
 const HEX_RE = /\b[0-9a-fA-F]{32,}\b/g;
 const BASE64_RE = /(?<![A-Za-z0-9+_=-])[A-Za-z0-9+_-]{40,}={0,2}/g;
+
+/** Key-name denylist (REA-474): normalized (lowercased, separator-joined)
+ * segments that mark a field as sensitive by name alone, regardless of what
+ * its value looks like. Kept as single normalized words/compounds so a
+ * whole-segment match never fires on a substring -- "tokenizer" is one
+ * segment, "tokenizer", not "token" plus a suffix. */
+const KEY_DENYLIST = new Set([
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "apikey",
+  "auth",
+  "authorization",
+  "credential",
+  "credentials",
+  "privatekey",
+  "accesskey",
+  "session",
+]);
+
+/** Splits a key into lowercase segments on camelCase boundaries and any
+ * non-alphanumeric separator (snake_case, kebab-case, dotted). */
+function keySegments(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((s) => s.toLowerCase());
+}
+
+/** True when some contiguous run of a key's segments, joined with no
+ * separator, equals a denylisted word exactly -- catches "api_key",
+ * "apiKey" and "db_password" alike, without matching "tokenizer" or
+ * "authentic". */
+export function isKeyDenylisted(key: string): boolean {
+  const segments = keySegments(key);
+  for (let i = 0; i < segments.length; i++) {
+    let joined = "";
+    for (let j = i; j < segments.length; j++) {
+      joined += segments[j];
+      if (KEY_DENYLIST.has(joined)) return true;
+    }
+  }
+  return false;
+}
 
 function luhnValid(digits: string): boolean {
   let sum = 0;
@@ -79,8 +144,10 @@ function luhnValid(digits: string): boolean {
 /** Applies the five pattern rules to one string. Pure; exported so the
  * vector tests can drive it directly. */
 export function scrubString(value: string): string {
-  let out = value.replace(JWT_RE, SCRUBBED);
+  let out = value.replace(URL_CREDS_RE, (_match, scheme: string) => `${scheme}://${SCRUBBED}@`);
+  out = out.replace(JWT_RE, SCRUBBED);
   out = out.replace(PREFIXED_KEY_RE, SCRUBBED);
+  out = out.replace(AWS_KEY_RE, SCRUBBED);
   out = out.replace(CARD_RE, (run) => {
     const digits = run.replace(/[ -]/g, "");
     return digits.length >= 13 && digits.length <= 19 && luhnValid(digits) ? SCRUBBED : run;
@@ -98,7 +165,7 @@ function scrubRequest(request: WireRequest, allowFields: ReadonlySet<string>): W
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(out.headers)) {
       const lower = name.toLowerCase();
-      if (REMOVED_HEADERS.has(lower) && !allowFields.has(lower)) {
+      if ((REMOVED_HEADERS.has(lower) || isKeyDenylisted(lower)) && !allowFields.has(lower)) {
         headers[name] = SCRUBBED;
       } else {
         headers[name] = scrubString(value);
@@ -113,7 +180,9 @@ function scrubBreadcrumb(crumb: WireBreadcrumb): WireBreadcrumb {
   let data: Record<string, string> | null = null;
   if (crumb.data) {
     data = {};
-    for (const [name, value] of Object.entries(crumb.data)) data[name] = scrubString(value);
+    for (const [name, value] of Object.entries(crumb.data)) {
+      data[name] = isKeyDenylisted(name) ? SCRUBBED : scrubString(value);
+    }
   }
   return { ...crumb, message: scrubString(crumb.message), data };
 }
@@ -138,7 +207,11 @@ function scrubUser(user: WireUser, allowFields: ReadonlySet<string>): WireUser {
 function scrubStringMap(map: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(map)) {
-    out[name] = typeof value === "string" ? scrubString(value) : value;
+    if (typeof value !== "string") {
+      out[name] = value;
+    } else {
+      out[name] = isKeyDenylisted(name) ? SCRUBBED : scrubString(value);
+    }
   }
   return out;
 }

@@ -5,7 +5,7 @@ import { applyCustomScrubRules, compileCustomScrubRules, NO_CUSTOM_SCRUB_RULES, 
 import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_CONTEXT_ENTRIES, MAX_CONTEXT_KEY_LENGTH, MAX_FRAMES_PER_EVENT, MAX_MESSAGE_LENGTH, MAX_STRING_LENGTH, MAX_TAGS_PER_EVENT, } from "./types.js";
 /**
  * @realuptime/errors: minimal JS/Node error tracking SDK, Phase 1
- * (docs/errors-plan.md). Captures unhandled exceptions and rejections plus
+ * (the internal-docs repo's errors-plan.md). Captures unhandled exceptions and rejections plus
  * manual `captureException`/`captureMessage`, scrubs PII client-side by
  * default (scrub.ts), and posts to the project's DSN-style ingest endpoint.
  *
@@ -295,7 +295,7 @@ async function fetchScrubRules(forState) {
         const url = scrubRulesUrlFor(forState.options.dsn);
         if (!url)
             return;
-        const fetchImpl = forState.options.fetchImpl ?? fetch;
+        const fetchImpl = forState.options.fetchImpl ?? ((...args) => fetch(...args));
         const response = await fetchImpl(url, { method: "GET", signal: AbortSignal.timeout(SCRUB_RULES_TIMEOUT_MS) });
         if (!response.ok)
             return;

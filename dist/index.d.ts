@@ -4,7 +4,7 @@ import { type CustomScrubRule } from "./custom-scrub.ts";
 import { type WireFrame, type WireRequest, type WireUser } from "./types.ts";
 /**
  * @realuptime/errors: minimal JS/Node error tracking SDK, Phase 1
- * (docs/errors-plan.md). Captures unhandled exceptions and rejections plus
+ * (the internal-docs repo's errors-plan.md). Captures unhandled exceptions and rejections plus
  * manual `captureException`/`captureMessage`, scrubs PII client-side by
  * default (scrub.ts), and posts to the project's DSN-style ingest endpoint.
  *

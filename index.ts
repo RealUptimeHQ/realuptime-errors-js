@@ -41,7 +41,7 @@ import {
 
 /**
  * @realuptime/errors: minimal JS/Node error tracking SDK, Phase 1
- * (docs/errors-plan.md). Captures unhandled exceptions and rejections plus
+ * (the internal-docs repo's errors-plan.md). Captures unhandled exceptions and rejections plus
  * manual `captureException`/`captureMessage`, scrubs PII client-side by
  * default (scrub.ts), and posts to the project's DSN-style ingest endpoint.
  *
@@ -404,7 +404,7 @@ async function fetchScrubRules(forState: SdkState): Promise<void> {
   try {
     const url = scrubRulesUrlFor(forState.options.dsn);
     if (!url) return;
-    const fetchImpl = forState.options.fetchImpl ?? fetch;
+    const fetchImpl = forState.options.fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
     const response = await fetchImpl(url, { method: "GET", signal: AbortSignal.timeout(SCRUB_RULES_TIMEOUT_MS) });
     if (!response.ok) return;
     const body = (await response.json()) as { rules?: unknown };

@@ -1,5 +1,5 @@
 /**
- * The Errors wire contract (docs/errors-plan.md, "The SDKs: two
+ * The Errors wire contract (the internal-docs repo's errors-plan.md, "The SDKs: two
  * languages, one contract").
  *
  * DUPLICATED, not imported. Same convention as apps/agent/types.ts and for

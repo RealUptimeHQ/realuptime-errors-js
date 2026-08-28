@@ -11,9 +11,14 @@ they merge upstream.
 
 ## Install
 
-Installs straight from GitHub today. npm, PyPI, RubyGems, and Packagist packages are coming; this note disappears the day they ship.
+Installable from the package registry (primary) or straight from this mirror's git history (e.g. to pin an exact commit).
 
 ```bash
+npm install @realuptime/errors
+```
+
+```bash
+# or, straight from this mirror
 npm install github:RealUptimeHQ/realuptime-errors-js
 ```
 

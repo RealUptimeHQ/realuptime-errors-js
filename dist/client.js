@@ -2,7 +2,7 @@ import { EventBuffer } from "./buffer.js";
 import { MAX_EVENTS_PER_BATCH } from "./types.js";
 /**
  * Delivery: batched, buffered, backed off, and incapable of crashing the
- * host app (docs/errors-plan.md, "The SDKs"). Disciplines inherited from
+ * host app (the internal-docs repo's errors-plan.md, "The SDKs"). Disciplines inherited from
  * apps/agent/api.ts and runtime.ts:
  *
  *   - Failures never throw out of the SDK. Everything is caught; the first
@@ -24,7 +24,6 @@ export const SEND_TIMEOUT_MS = 10_000;
 export const BACKOFF_START_MS = 5_000;
 export const BACKOFF_MAX_MS = 300_000;
 export class Transport {
-    options;
     buffer = new EventBuffer();
     fetchImpl;
     now;
@@ -35,9 +34,16 @@ export class Transport {
     disabled = false;
     loggedKinds = new Set();
     inFlight = null;
+    // Explicit fields, not parameter properties: strip-only TS mode (the
+    // probe runtime) cannot execute parameter properties.
+    options;
     constructor(options) {
         this.options = options;
-        this.fetchImpl = options.fetchImpl ?? fetch;
+        // A bare `fetch` reference called as `this.fetchImpl(...)` loses its
+        // window binding and throws "Illegal invocation" in every browser (Node
+        // does not care, which is why server-side use and the mocked tests never
+        // saw it). Bind explicitly.
+        this.fetchImpl = options.fetchImpl ?? ((...args) => fetch(...args));
         this.now = options.now ?? Date.now;
         this.log = options.log ?? ((message) => console.error(message));
     }
