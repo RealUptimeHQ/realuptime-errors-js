@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { SDK_VERSION } from "./index.ts";
 import {
+  ERROR_LEVELS,
   HARD_MAX_MAP_ENTRIES,
   MAX_BREADCRUMB_DATA_ENTRIES,
   MAX_BREADCRUMBS_PER_EVENT,
@@ -146,6 +148,7 @@ describe("wire contract pinning (mirrored by packages/db/error-ingest.ts)", () =
       context: {},
       device,
       eventId: "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b",
+      level: "fatal",
     };
     expect(Object.keys(user).sort()).toEqual(["email", "id", "username"]);
     expect(Object.keys(device).sort()).toEqual(["arch", "platform", "runtime", "runtimeVersion"]);
@@ -159,6 +162,7 @@ describe("wire contract pinning (mirrored by packages/db/error-ingest.ts)", () =
       "exceptionType",
       "fingerprint",
       "frames",
+      "level",
       "message",
       "occurredAt",
       "release",
@@ -166,6 +170,10 @@ describe("wire contract pinning (mirrored by packages/db/error-ingest.ts)", () =
       "tags",
       "user",
     ]);
+  });
+
+  it("pins the level enum (REA-569)", () => {
+    expect(ERROR_LEVELS).toEqual(["fatal", "error", "warning", "info", "debug"]);
   });
 
   it("keeps every v2 field OPTIONAL, so a v1 event still satisfies the contract", () => {
@@ -213,7 +221,7 @@ describe("wire contract pinning (mirrored by packages/db/error-ingest.ts)", () =
       comments: "c",
       name: "n",
       email: "e",
-      sdk: "realuptime-errors-js/0.4.0",
+      sdk: `realuptime-errors-js/${SDK_VERSION}`,
     };
     expect(Object.keys(feedback).sort()).toEqual(["comments", "email", "eventId", "name", "sdk"]);
     expect(MAX_FEEDBACK_COMMENTS_LENGTH).toBe(4000);

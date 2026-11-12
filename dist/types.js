@@ -31,6 +31,7 @@
  * (a removed field, a changed meaning) gets a versioned PATH, the way the
  * fingerprint algorithm gets a version rather than mutating history.
  */
+export const ERROR_LEVELS = ["fatal", "error", "warning", "info", "debug"];
 // Mirrored by MAX_ERROR_EVENTS_PER_BATCH etc. in packages/db/error-ingest.ts
 // and pinned by wire-contract.test.ts on both sides.
 export const MAX_EVENTS_PER_BATCH = 50;

@@ -130,7 +130,7 @@ describe("breadcrumbs (Phase 3)", () => {
       batches.push(JSON.parse(init?.body as string) as WireBatch);
       return okResponse();
     });
-    init({ dsn: "https://x/i/rue_a", captureUnhandled: false, log: () => {}, fetchImpl: fetchImpl as unknown as typeof fetch });
+    init({ dsn: "https://x/api/errors/v1/ingest/rue_a", captureUnhandled: false, log: () => {}, fetchImpl: fetchImpl as unknown as typeof fetch });
 
     // 25 breadcrumbs into a 20-slot ring: 5 evicted, and the count says so.
     for (let i = 0; i < 25; i++) addBreadcrumb({ message: `step ${i}`, category: "test" });
@@ -166,7 +166,7 @@ describe("public API never throws", () => {
 
   it("init with a broken fetch never lets a failure escape", async () => {
     init({
-      dsn: "https://x/i/rue_a",
+      dsn: "https://x/api/errors/v1/ingest/rue_a",
       captureUnhandled: false,
       log: () => {},
       fetchImpl: (() => {

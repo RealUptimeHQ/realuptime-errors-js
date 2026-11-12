@@ -9,6 +9,12 @@
  * secret a CI step needs is the DSN the app already has; this module derives
  * the upload URL from that DSN (or from a bare key plus an origin).
  *
+ * Only the main host serves that route. A DSN issued since the hostname split
+ * names the intake host, which takes error events and nothing as heavy as an
+ * upload (up to 10 files of 2 MB each), so a DSN on the intake host uploads to
+ * the main host. The intake answers an upload that still arrives there with a
+ * redirect to the main host (apps/ingest), for clients published before this.
+ *
  * Honesty rules, same as the rest of the SDK:
  *  - Local refusals happen BEFORE any byte is sent (a file over the per-file
  *    cap, more files than a release may hold, no `.map` files found), and
@@ -31,6 +37,10 @@ export declare const MAX_SOURCEMAP_BYTES: number;
 export declare const MAX_ARTIFACTS_PER_RELEASE = 50;
 export declare const MAX_ARTIFACTS_PER_UPLOAD = 10;
 export declare const DEFAULT_API_ORIGIN = "https://realuptime.io";
+/** The intake host every DSN issued since the hostname split names
+ * (`ingestBaseUrl` in packages/db/errors-dsn.ts). Source maps are not
+ * uploaded there; see the module comment. */
+export declare const INGEST_HOSTNAME = "ingest.realuptime.io";
 export declare class SourcemapUploadError extends Error {
     /** Non-2xx answers carry the server's own status and RU- code verbatim. */
     readonly httpStatus?: number;
@@ -41,7 +51,7 @@ export declare class SourcemapUploadError extends Error {
     });
 }
 export interface UploadTarget {
-    /** The project DSN, e.g. `https://realuptime.io/api/errors/v1/ingest/rue_...`. */
+    /** The project DSN, e.g. `https://ingest.realuptime.io/api/errors/v1/ingest/rue_...`. */
     dsn?: string;
     /** A bare ingest key, used with `origin` when no DSN is at hand. */
     ingestKey?: string;
@@ -49,8 +59,12 @@ export interface UploadTarget {
     origin?: string;
 }
 /**
- * `https://host/api/errors/v1/ingest/<key>` -> `https://host/api/errors/v1/sourcemaps/<key>`.
- * A DSN wins over a bare key when both are given; either is enough.
+ * `https://host/api/errors/v1/ingest/<key>` -> `https://host/api/errors/v1/sourcemaps/<key>`,
+ * except that a DSN on the intake host (`ingest.realuptime.io`) uploads to the
+ * main host, `https://realuptime.io`, because only the main host stores maps.
+ * Any other DSN host (a pre-split `realuptime.io` DSN, a self-hosted or local
+ * one) keeps its own origin. A DSN wins over a bare key when both are given;
+ * either is enough.
  */
 export declare function resolveSourcemapUploadUrl(target: UploadTarget): string;
 export interface SourcemapFile {

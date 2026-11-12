@@ -3,7 +3,7 @@
 Zero-dependency error tracking SDK for JavaScript and Node: part of
 [RealUptime Errors](https://realuptime.io/error-tracking).
 
-This is a **mirror**. It is published from `packages/errors-js` in the
+This is a **mirror**. It is published from `errors-js` in the
 [realuptime monorepo](https://github.com/RealUptimeHQ/realuptime) by
 `scripts/publish-sdk-mirrors.mjs` and is not edited directly; open issues
 and PRs against this repo, but expect source changes to land here after
@@ -107,7 +107,7 @@ extra build step or type-stripping flag on the consumer's side.
 
 ## Version
 
-This mirror tracks SDK_VERSION `0.4.0` in `index.ts`, the string every
+This mirror tracks SDK_VERSION `0.5.0` in `index.ts`, the string every
 event actually carries on the wire.
 
 ## License

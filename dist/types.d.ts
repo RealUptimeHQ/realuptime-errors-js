@@ -170,7 +170,16 @@ export interface WireEvent {
      * user's report to this exact occurrence. An integration that never
      * enables feedback keeps emitting the id-less payload it always did. */
     eventId?: string;
+    /** REA-569: severity, Sentry's five-value convention. Per-capture only
+     * (CaptureContext.level, not a sticky init()/scope option): unlike
+     * environment or release, a severity is a fact about THIS occurrence, not
+     * about the process. Absent resolves to "error" server-side. */
+    level?: ErrorLevel;
 }
+/** REA-569: the closed severity set, Sentry's own five values so a
+ * migrating customer's rule filters translate directly. */
+export type ErrorLevel = "fatal" | "error" | "warning" | "info" | "debug";
+export declare const ERROR_LEVELS: readonly ErrorLevel[];
 export interface WireBatch {
     /** e.g. "realuptime-errors-js/0.1.0" */
     sdk: string;
@@ -240,7 +249,7 @@ export interface WireFeedback {
      * filled it. Scrubbed by the same pattern rules. */
     name?: string;
     email?: string;
-    /** e.g. "realuptime-errors-js/0.4.0" */
+    /** e.g. "realuptime-errors-js/0.5.0" */
     sdk: string;
 }
 export declare const MAX_FEEDBACK_COMMENTS_LENGTH = 4000;

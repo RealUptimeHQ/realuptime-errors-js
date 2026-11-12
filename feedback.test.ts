@@ -15,6 +15,7 @@ import {
   flush,
   init,
   lastEventId,
+  SDK_VERSION,
   showReportDialog,
 } from "./index.ts";
 import type { WireBatch, WireFeedback } from "./types.ts";
@@ -118,14 +119,14 @@ describe("buildFeedback scrubs before serialization", () => {
         name: " Alice ",
         email: "alice@example.com",
       },
-      "realuptime-errors-js/0.4.0",
+      `realuptime-errors-js/${SDK_VERSION}`,
     );
     expect(out).toEqual({
       eventId: "0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b",
       comments: "I paid with [scrubbed] and it failed; token [scrubbed]",
       name: "Alice",
       email: "alice@example.com",
-      sdk: "realuptime-errors-js/0.4.0",
+      sdk: `realuptime-errors-js/${SDK_VERSION}`,
     });
   });
 
@@ -198,7 +199,7 @@ describe("the dialog", () => {
       eventId: id,
       comments: "clicked pay, card [scrubbed], spinner forever",
       email: "alice@example.com",
-      sdk: "realuptime-errors-js/0.4.0",
+      sdk: `realuptime-errors-js/${SDK_VERSION}`,
     });
     // The event batch was flushed BEFORE the report (beforeSend), so the
     // report never outruns its event on the wire.

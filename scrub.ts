@@ -72,7 +72,7 @@ const REMOVED_HEADERS = new Set(["authorization", "proxy-authorization", "cookie
  * `user.id` is deliberately absent: see the module doc. */
 export const REMOVED_USER_FIELDS = ["user.email", "user.username"] as const;
 
-const URL_CREDS_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*):\/\/[^\s/@]+:[^\s/@]+@/g;
+const URL_CREDS_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]{0,31}):\/\/[^\s/@:]+:[^\s/@]+@/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g;
 const PREFIXED_KEY_RE = /\b(?:sk|pk|rk|ghp|gho|ghs|xox[a-z]|rua|rue|ru_live|whsec)_[A-Za-z0-9_-]{8,}/g;
 const AWS_KEY_RE = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;

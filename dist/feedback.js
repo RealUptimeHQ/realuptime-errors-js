@@ -5,7 +5,7 @@ export const DEFAULT_THEME = {
     foreground: "#111827",
     muted: "#6b7280",
     border: "#d1d5db",
-    accent: "#5b4de6",
+    accent: "#095dce",
     accentForeground: "#ffffff",
     error: "#b91c1c",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",

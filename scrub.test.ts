@@ -5,7 +5,7 @@ import type { WireEvent } from "./types.ts";
 
 /**
  * Drives the SHARED scrub vectors (scrub-vectors.json) through this SDK's
- * implementation. The same file drives packages/errors-py's tests and
+ * implementation. The same file drives errors-py's tests and
  * packages/db/error-scrub.test.ts; parity across the three is the point,
  * so this test must never grow expectations of its own -- new behavior
  * gets a new vector, which the other two suites pick up automatically.
@@ -54,5 +54,17 @@ describe("scrub vectors (shared with the Python SDK and the server)", () => {
     const snapshot = JSON.parse(JSON.stringify(input));
     scrubEvent(input);
     expect(input).toEqual(snapshot);
+  });
+});
+
+describe("linear time on hostile input", () => {
+  // Error messages often carry user input, and this runs in the customer's
+  // own process: a pattern that backtracks on it stalls their app.
+  it("scrubs a dotted scheme run followed by a long colon run quickly", async () => {
+    const { scrubString } = await import("./scrub.ts");
+    const hostile = `${"a.".repeat(300)}://${":".repeat(2000)}`;
+    const started = performance.now();
+    scrubString(hostile);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 });

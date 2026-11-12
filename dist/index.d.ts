@@ -1,7 +1,8 @@
 import { type FeedbackOptions, type ReportDialogHandle, type ReportDialogOptions } from "./feedback.ts";
 export type { FeedbackOptions, ReportDialogField, ReportDialogHandle, ReportDialogOptions, ReportDialogTheme } from "./feedback.ts";
+export type { WireEvent } from "./types.ts";
 import { type CustomScrubRule } from "./custom-scrub.ts";
-import { type WireFrame, type WireRequest, type WireUser } from "./types.ts";
+import { type ErrorLevel, type WireEvent, type WireFrame, type WireRequest, type WireUser } from "./types.ts";
 /**
  * @realuptime/errors: minimal JS/Node error tracking SDK, Phase 1
  * (the internal-docs repo's errors-plan.md). Captures unhandled exceptions and rejections plus
@@ -14,13 +15,13 @@ import { type WireFrame, type WireRequest, type WireUser } from "./types.ts";
  * none.
  */
 export declare const SDK_NAME = "realuptime-errors-js";
-export declare const SDK_VERSION = "0.4.0";
+export declare const SDK_VERSION = "0.5.0";
 /** How long the one-time rules fetch may take before the SDK stops waiting
  * for it (it was never blocking capture anyway). */
 export declare const SCRUB_RULES_TIMEOUT_MS = 5000;
 export interface ErrorsInit {
     /** The project's ingest URL, e.g.
-     * `https://realuptime.io/api/errors/v1/ingest/rue_...`. Shown once at
+     * `https://ingest.realuptime.io/api/errors/v1/ingest/rue_...`. Shown once at
      * project creation; safe to embed client-side (it can only submit events
      * to its one project). */
     dsn: string;
@@ -59,11 +60,27 @@ export interface ErrorsInit {
      * switch in realuptime Errors settings must ALSO be on, or the endpoint
      * refuses with `reason: "feedback_disabled"`. See feedback.ts. */
     feedback?: FeedbackOptions;
+    /** A last look at every event before it is queued: return the event to
+     * send (the same object or a new one), or null to drop it. Runs AFTER the
+     * default scrub and any additional scrub rules, so it sees exactly what
+     * would otherwise leave and can only narrow it further. Fails closed: a
+     * hook that throws drops the event (logged once) rather than letting it
+     * through unfiltered, because a hook installed to remove data must never
+     * turn into the reason that data leaves. */
+    beforeSend?: (event: WireEvent) => WireEvent | null;
     /** Test seams. */
     fetchImpl?: typeof fetch;
     now?: () => number;
     log?: (message: string) => void;
 }
+/**
+ * Whether error reporting is actually on: `init()` was called with a dsn
+ * that passed `isIngestUrl`. A host process should log this once at
+ * startup (`realuptimeErrors.isEnabled()`) rather than assume that wiring
+ * `init()` into the code means events are flowing -- REA-575 was exactly
+ * that assumption, wrong for months because nothing checked it.
+ */
+export declare function isEnabled(): boolean;
 /** Parses a V8/JavaScriptCore/SpiderMonkey stack string into wire frames,
  * innermost first. Best-effort: an unparseable line is skipped, never
  * fatal. */
@@ -79,6 +96,9 @@ export interface CaptureContext {
     tags?: Record<string, string>;
     /** v2: custom context for THIS event only, merged over the sticky scope. */
     context?: Record<string, string>;
+    /** REA-569: severity for THIS event only. No sticky/init() equivalent --
+     * see WireEvent.level's doc for why. */
+    level?: ErrorLevel;
 }
 /**
  * v2 (REA-182): sets the sticky identity applied to every subsequent event.

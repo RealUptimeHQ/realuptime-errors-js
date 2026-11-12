@@ -15,12 +15,13 @@ import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_CONTEXT_ENT
  * none.
  */
 export const SDK_NAME = "realuptime-errors-js";
-export const SDK_VERSION = "0.4.0";
+export const SDK_VERSION = "0.5.0"; // x-release-please-version
 /** How long the one-time rules fetch may take before the SDK stops waiting
  * for it (it was never blocking capture anyway). */
 export const SCRUB_RULES_TIMEOUT_MS = 5_000;
 let state = null;
 let initFailureLogged = false;
+let beforeSendFailureLogged = false;
 function safeLog(message) {
     try {
         (state?.options.log ?? console.error)(`[realuptime-errors] ${message}`);
@@ -28,6 +29,41 @@ function safeLog(message) {
     catch {
         // Even logging must not throw.
     }
+}
+/** The ingest route's path shape: `/api/errors/v1/ingest/<key>`, an
+ * optional trailing slash, nothing else. Mirrors the marker check in
+ * feedback.ts/custom-scrub.ts and the stricter parse in sourcemaps.ts. */
+const INGEST_PATH_RE = /^\/api\/errors\/v1\/ingest\/[^/?#]+\/?$/;
+/**
+ * REA-575: a `dsn` must be the full ingest URL the server hands out at
+ * project creation, not the bare `rue_...` key alone. Before this check,
+ * `init()` accepted any non-empty string and handed it straight to the
+ * transport as the fetch endpoint: a bare key is not a fetchable URL, so
+ * every send failed inside the transport's own never-throw try/catch and
+ * the SDK silently reported nothing, forever, with no signal anywhere
+ * (realuptime-web's own DSN held exactly this mistake in production).
+ */
+function isIngestUrl(dsn) {
+    let url;
+    try {
+        url = new URL(dsn);
+    }
+    catch {
+        return false;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:")
+        return false;
+    return INGEST_PATH_RE.test(url.pathname);
+}
+/**
+ * Whether error reporting is actually on: `init()` was called with a dsn
+ * that passed `isIngestUrl`. A host process should log this once at
+ * startup (`realuptimeErrors.isEnabled()`) rather than assume that wiring
+ * `init()` into the code means events are flowing -- REA-575 was exactly
+ * that assumption, wrong for months because nothing checked it.
+ */
+export function isEnabled() {
+    return state !== null;
 }
 function clip(value, max) {
     return value.length > max ? value.slice(0, max) : value;
@@ -240,6 +276,7 @@ function buildEvent(message, exceptionType, stack, context) {
         // REA-257: minted only when feedback is enabled, so an integration that
         // never opted in keeps emitting the id-less payload it always did.
         ...(state?.feedback ? { eventId: mintEventId() } : {}),
+        ...(context.level ? { level: context.level } : {}),
     };
 }
 /**
@@ -281,10 +318,30 @@ function capture(event) {
         return null;
     // Defaults first, always; the customer's additional rules on the result.
     const scrubbed = scrubEvent(event, state.options.allowFields ?? []);
-    state.transport.enqueue(applyCustomScrubRules(scrubbed, state.customScrub));
-    if (event.eventId)
-        state.lastEventId = event.eventId;
-    return event.eventId ?? null;
+    const outgoing = runBeforeSend(applyCustomScrubRules(scrubbed, state.customScrub), state.options.beforeSend);
+    if (!outgoing)
+        return null;
+    state.transport.enqueue(outgoing);
+    if (outgoing.eventId)
+        state.lastEventId = outgoing.eventId;
+    return outgoing.eventId ?? null;
+}
+/** Applies the integrator's `beforeSend`, failing closed: a throw or a
+ * non-object result drops the event. */
+function runBeforeSend(event, hook) {
+    if (typeof hook !== "function")
+        return event;
+    try {
+        const result = hook(event);
+        return result && typeof result === "object" ? result : null;
+    }
+    catch (failure) {
+        if (!beforeSendFailureLogged) {
+            beforeSendFailureLogged = true;
+            safeLog(`beforeSend threw; the event was dropped: ${String(failure)}`);
+        }
+        return null;
+    }
 }
 /** Fetches the project's additional scrub rules by ingest key and merges
  * them over the inline ones. Best-effort, bounded, never throws, never
@@ -428,6 +485,19 @@ function installUnhandledHandlers() {
     }
     return null;
 }
+/** Logs an init-time refusal through THIS call's own `log` option (falling
+ * back to console.error), not through whatever a previous successful init
+ * left in `state` -- state is intentionally untouched on a refused init, so
+ * using `state?.options.log` here would mean a caller's own logger never
+ * sees why its own call was refused. */
+function logInitFailure(options, message) {
+    try {
+        (options?.log ?? console.error)(`[realuptime-errors] ${message}`);
+    }
+    catch {
+        // Even logging must not throw.
+    }
+}
 /** Initializes the SDK. Safe to call more than once (the last call wins);
  * safe to call with a bad DSN (logs once, stays inert). */
 export function init(options) {
@@ -435,7 +505,14 @@ export function init(options) {
         if (!options?.dsn || typeof options.dsn !== "string") {
             if (!initFailureLogged) {
                 initFailureLogged = true;
-                safeLog("init called without a dsn; error reporting is disabled.");
+                logInitFailure(options, "init called without a dsn; error reporting is disabled.");
+            }
+            return;
+        }
+        if (!isIngestUrl(options.dsn)) {
+            if (!initFailureLogged) {
+                initFailureLogged = true;
+                logInitFailure(options, "dsn must be the full ingest URL, got a bare key (or a malformed URL); expected https://<host>/api/errors/v1/ingest/<key>. Error reporting is disabled.");
             }
             return;
         }
