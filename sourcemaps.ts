@@ -235,14 +235,31 @@ export interface UploadSummary {
   url: string;
   /** The server's post-upload view of the release's files. */
   releaseFiles: { name: string; size: number }[];
-  limits: { maxFilesPerRelease: number; maxBytesPerFile: number } | null;
+  limits: {
+    maxFilesPerRelease: number;
+    maxBytesPerFile: number;
+    maxBytesPerProject?: number;
+    maxReleasesPerProject?: number;
+  } | null;
   files: { name: string; bytes: number; sha256: string }[];
+  /** Releases whose maps the server removed to keep the project within its
+   * storage (the least recently active ones). */
+  removedReleases: string[];
+  /** The server's warning, when it sent one (an upload authorised by the DSN
+   * alone is answered with one until that stops being accepted). */
+  warning: string | null;
 }
 
 export interface UploadOptions {
   url: string;
   release: string;
   files: readonly SourcemapFile[];
+  /** An API key with Errors write access, sent as `Authorization: Bearer`.
+   * The DSN in `url` names the project; the key authorises the upload. Sent
+   * only where `apiKeyAllowedFor` allows. */
+  apiKey?: string;
+  /** An origin the key may also go to (the CLI's configured API URL). */
+  trustedOrigin?: string;
   fetchImpl?: typeof fetch;
   onProgress?: (progress: UploadProgress) => void;
 }
@@ -255,6 +272,30 @@ export interface UploadOptions {
  * reported in the thrown error's message so the caller knows the release is
  * now partially updated rather than untouched.
  */
+/**
+ * Whether the API key may go to `url`: realuptime.io (or a host under it)
+ * over https, or exactly `trustedOrigin`. A DSN on another host (self-hosted,
+ * local) keeps its own upload origin, and an account API key must not follow
+ * it there.
+ */
+export function apiKeyAllowedFor(url: string, trustedOrigin?: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  if (trustedOrigin) {
+    try {
+      if (target.origin === new URL(trustedOrigin).origin) return true;
+    } catch {
+      // An unparseable trusted origin trusts nothing.
+    }
+  }
+  const host = target.hostname.toLowerCase();
+  return target.protocol === "https:" && (host === "realuptime.io" || host.endsWith(".realuptime.io"));
+}
+
 export async function uploadSourcemaps(options: UploadOptions): Promise<UploadSummary> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const batches = batchSourcemapFiles(options.files);
@@ -262,6 +303,12 @@ export async function uploadSourcemaps(options: UploadOptions): Promise<UploadSu
   let replaced = 0;
   let releaseFiles: UploadSummary["releaseFiles"] = [];
   let limits: UploadSummary["limits"] = null;
+  let warning: string | null = null;
+  const removedReleases: string[] = [];
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (options.apiKey && apiKeyAllowedFor(options.url, options.trustedOrigin)) {
+    headers.authorization = `Bearer ${options.apiKey}`;
+  }
   for (let index = 0; index < batches.length; index++) {
     const batch = batches[index];
     const progress: UploadProgress = { batch: index + 1, batches: batches.length, files: batch };
@@ -270,7 +317,7 @@ export async function uploadSourcemaps(options: UploadOptions): Promise<UploadSu
     try {
       response = await fetchImpl(options.url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers,
         body: JSON.stringify({
           release: options.release,
           files: batch.map((file) => ({ name: file.name, content: file.content })),
@@ -301,6 +348,12 @@ export async function uploadSourcemaps(options: UploadOptions): Promise<UploadSu
     replaced += batchReplaced;
     if (Array.isArray(body.files)) releaseFiles = body.files as UploadSummary["releaseFiles"];
     if (body.limits && typeof body.limits === "object") limits = body.limits as UploadSummary["limits"];
+    if (typeof body.warning === "string") warning = body.warning;
+    if (Array.isArray(body.removedReleases)) {
+      for (const release of body.removedReleases) {
+        if (typeof release === "string" && !removedReleases.includes(release)) removedReleases.push(release);
+      }
+    }
     progress.stored = batchStored;
     progress.replaced = batchReplaced;
     options.onProgress?.(progress);
@@ -315,6 +368,8 @@ export async function uploadSourcemaps(options: UploadOptions): Promise<UploadSu
     releaseFiles,
     limits,
     files: options.files.map((file) => ({ name: file.name, bytes: file.bytes, sha256: file.sha256 })),
+    removedReleases,
+    warning,
   };
 }
 

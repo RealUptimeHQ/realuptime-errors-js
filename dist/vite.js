@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { collectSourcemapFiles, formatProgressLine, preflightSourcemapFiles, resolveSourcemapUploadUrl, uploadSourcemaps, } from "./sourcemaps.js";
+import { apiKeyAllowedFor, collectSourcemapFiles, formatProgressLine, preflightSourcemapFiles, resolveSourcemapUploadUrl, uploadSourcemaps, } from "./sourcemaps.js";
 /** The shared run both plugins call: collect, pre-flight, upload, report.
  * Returns the summary on success, null when skipped or failed (already
  * logged); throws only when `failOnError` is set. */
@@ -32,6 +32,10 @@ export async function runSourcemapUpload(options, dir, label) {
     catch (cause) {
         return fail(cause instanceof Error ? cause.message : String(cause));
     }
+    const apiKey = options.apiKey ?? env.REALUPTIME_API_KEY;
+    if (apiKey && !apiKeyAllowedFor(url, options.origin)) {
+        log(`${prefix} the API key is sent only to realuptime.io over https or the configured origin; not to ${new URL(url).origin}.`);
+    }
     const { files, duplicates, missing } = collectSourcemapFiles([dir], { urlPrefix: options.urlPrefix });
     if (missing.length > 0)
         return fail(`${dir} does not exist; no source maps uploaded.`);
@@ -45,10 +49,17 @@ export async function runSourcemapUpload(options, dir, label) {
             url,
             release: options.release,
             files,
+            apiKey,
+            trustedOrigin: options.origin,
             fetchImpl: options.fetchImpl,
             onProgress: (progress) => log(`${prefix} ${formatProgressLine(progress)}`),
         });
         log(`${prefix} uploaded ${summary.uploaded} source map${summary.uploaded === 1 ? "" : "s"} for release ${summary.release} (stored ${summary.stored}, replaced ${summary.replaced}).`);
+        if (summary.removedReleases.length > 0) {
+            log(`${prefix} to stay within the project's source-map storage, maps were removed for: ${summary.removedReleases.join(", ")}.`);
+        }
+        if (summary.warning)
+            log(`${prefix} warning: ${summary.warning}`);
         return summary;
     }
     catch (cause) {

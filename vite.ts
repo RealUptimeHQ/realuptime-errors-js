@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import {
+  apiKeyAllowedFor,
   collectSourcemapFiles,
   formatProgressLine,
   preflightSourcemapFiles,
@@ -21,6 +22,7 @@ import {
  *       realuptimeSourcemaps({
  *         release: process.env.RELEASE ?? process.env.GITHUB_SHA!,
  *         dsn: process.env.REALUPTIME_ERRORS_DSN,
+ *         apiKey: process.env.REALUPTIME_API_KEY,
  *       }),
  *     ],
  *   });
@@ -42,8 +44,13 @@ export interface SourcemapPluginOptions {
   /** The release string the app reports at runtime (`init({ release })`).
    * The maps are matched to events by this exact string. */
   release: string;
-  /** The project DSN; `REALUPTIME_ERRORS_DSN` is read when omitted. */
+  /** The project DSN; `REALUPTIME_ERRORS_DSN` is read when omitted. It names
+   * the project the maps belong to. */
   dsn?: string;
+  /** An API key with Errors write access, which authorises the upload
+   * (`REALUPTIME_API_KEY` when omitted). Keep it in CI secrets; the DSN alone
+   * stops being accepted for uploads on February 17, 2027. */
+  apiKey?: string;
   /** A bare ingest key (`REALUPTIME_ERRORS_INGEST_KEY` when omitted), used
    * with `origin` when no DSN is set. */
   ingestKey?: string;
@@ -113,6 +120,10 @@ export async function runSourcemapUpload(
   } catch (cause) {
     return fail(cause instanceof Error ? cause.message : String(cause));
   }
+  const apiKey = options.apiKey ?? env.REALUPTIME_API_KEY;
+  if (apiKey && !apiKeyAllowedFor(url, options.origin)) {
+    log(`${prefix} the API key is sent only to realuptime.io over https or the configured origin; not to ${new URL(url).origin}.`);
+  }
   const { files, duplicates, missing } = collectSourcemapFiles([dir], { urlPrefix: options.urlPrefix });
   if (missing.length > 0) return fail(`${dir} does not exist; no source maps uploaded.`);
   const problem = preflightSourcemapFiles(files);
@@ -123,10 +134,16 @@ export async function runSourcemapUpload(
       url,
       release: options.release,
       files,
+      apiKey,
+      trustedOrigin: options.origin,
       fetchImpl: options.fetchImpl,
       onProgress: (progress) => log(`${prefix} ${formatProgressLine(progress)}`),
     });
     log(`${prefix} uploaded ${summary.uploaded} source map${summary.uploaded === 1 ? "" : "s"} for release ${summary.release} (stored ${summary.stored}, replaced ${summary.replaced}).`);
+    if (summary.removedReleases.length > 0) {
+      log(`${prefix} to stay within the project's source-map storage, maps were removed for: ${summary.removedReleases.join(", ")}.`);
+    }
+    if (summary.warning) log(`${prefix} warning: ${summary.warning}`);
     return summary;
   } catch (cause) {
     return fail(cause instanceof Error ? cause.message : String(cause));

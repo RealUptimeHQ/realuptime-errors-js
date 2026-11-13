@@ -195,6 +195,32 @@ export function batchSourcemapFiles(files, size = MAX_ARTIFACTS_PER_UPLOAD) {
  * reported in the thrown error's message so the caller knows the release is
  * now partially updated rather than untouched.
  */
+/**
+ * Whether the API key may go to `url`: realuptime.io (or a host under it)
+ * over https, or exactly `trustedOrigin`. A DSN on another host (self-hosted,
+ * local) keeps its own upload origin, and an account API key must not follow
+ * it there.
+ */
+export function apiKeyAllowedFor(url, trustedOrigin) {
+    let target;
+    try {
+        target = new URL(url);
+    }
+    catch {
+        return false;
+    }
+    if (trustedOrigin) {
+        try {
+            if (target.origin === new URL(trustedOrigin).origin)
+                return true;
+        }
+        catch {
+            // An unparseable trusted origin trusts nothing.
+        }
+    }
+    const host = target.hostname.toLowerCase();
+    return target.protocol === "https:" && (host === "realuptime.io" || host.endsWith(".realuptime.io"));
+}
 export async function uploadSourcemaps(options) {
     const fetchImpl = options.fetchImpl ?? fetch;
     const batches = batchSourcemapFiles(options.files);
@@ -202,6 +228,12 @@ export async function uploadSourcemaps(options) {
     let replaced = 0;
     let releaseFiles = [];
     let limits = null;
+    let warning = null;
+    const removedReleases = [];
+    const headers = { "content-type": "application/json" };
+    if (options.apiKey && apiKeyAllowedFor(options.url, options.trustedOrigin)) {
+        headers.authorization = `Bearer ${options.apiKey}`;
+    }
     for (let index = 0; index < batches.length; index++) {
         const batch = batches[index];
         const progress = { batch: index + 1, batches: batches.length, files: batch };
@@ -210,7 +242,7 @@ export async function uploadSourcemaps(options) {
         try {
             response = await fetchImpl(options.url, {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers,
                 body: JSON.stringify({
                     release: options.release,
                     files: batch.map((file) => ({ name: file.name, content: file.content })),
@@ -245,6 +277,14 @@ export async function uploadSourcemaps(options) {
             releaseFiles = body.files;
         if (body.limits && typeof body.limits === "object")
             limits = body.limits;
+        if (typeof body.warning === "string")
+            warning = body.warning;
+        if (Array.isArray(body.removedReleases)) {
+            for (const release of body.removedReleases) {
+                if (typeof release === "string" && !removedReleases.includes(release))
+                    removedReleases.push(release);
+            }
+        }
         progress.stored = batchStored;
         progress.replaced = batchReplaced;
         options.onProgress?.(progress);
@@ -259,6 +299,8 @@ export async function uploadSourcemaps(options) {
         releaseFiles,
         limits,
         files: options.files.map((file) => ({ name: file.name, bytes: file.bytes, sha256: file.sha256 })),
+        removedReleases,
+        warning,
     };
 }
 function partialNote(failedIndex, batches) {

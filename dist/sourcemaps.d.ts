@@ -128,17 +128,31 @@ export interface UploadSummary {
     limits: {
         maxFilesPerRelease: number;
         maxBytesPerFile: number;
+        maxBytesPerProject?: number;
+        maxReleasesPerProject?: number;
     } | null;
     files: {
         name: string;
         bytes: number;
         sha256: string;
     }[];
+    /** Releases whose maps the server removed to keep the project within its
+     * storage (the least recently active ones). */
+    removedReleases: string[];
+    /** The server's warning, when it sent one (an upload authorised by the DSN
+     * alone is answered with one until that stops being accepted). */
+    warning: string | null;
 }
 export interface UploadOptions {
     url: string;
     release: string;
     files: readonly SourcemapFile[];
+    /** An API key with Errors write access, sent as `Authorization: Bearer`.
+     * The DSN in `url` names the project; the key authorises the upload. Sent
+     * only where `apiKeyAllowedFor` allows. */
+    apiKey?: string;
+    /** An origin the key may also go to (the CLI's configured API URL). */
+    trustedOrigin?: string;
     fetchImpl?: typeof fetch;
     onProgress?: (progress: UploadProgress) => void;
 }
@@ -150,6 +164,13 @@ export interface UploadOptions {
  * reported in the thrown error's message so the caller knows the release is
  * now partially updated rather than untouched.
  */
+/**
+ * Whether the API key may go to `url`: realuptime.io (or a host under it)
+ * over https, or exactly `trustedOrigin`. A DSN on another host (self-hosted,
+ * local) keeps its own upload origin, and an account API key must not follow
+ * it there.
+ */
+export declare function apiKeyAllowedFor(url: string, trustedOrigin?: string): boolean;
 export declare function uploadSourcemaps(options: UploadOptions): Promise<UploadSummary>;
 /** One human line per progress event, for the CLI's stderr and the plugins'
  * logger. Hashes are shortened to 12 chars; full hashes are in the summary. */

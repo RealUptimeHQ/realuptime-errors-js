@@ -110,6 +110,15 @@ extra build step or type-stripping flag on the consumer's side.
 This mirror tracks SDK_VERSION `0.5.0` in `index.ts`, the string every
 event actually carries on the wire.
 
+## Running the tests
+
+The suite sits beside the code in this repository (Node.js 22 or newer):
+
+```bash
+npm install
+npm test
+```
+
 ## License
 
 MIT, see [LICENSE](./LICENSE).

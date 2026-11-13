@@ -11,6 +11,7 @@ import { type SourcemapFile, type UploadSummary } from "./sourcemaps.ts";
  *       realuptimeSourcemaps({
  *         release: process.env.RELEASE ?? process.env.GITHUB_SHA!,
  *         dsn: process.env.REALUPTIME_ERRORS_DSN,
+ *         apiKey: process.env.REALUPTIME_API_KEY,
  *       }),
  *     ],
  *   });
@@ -31,8 +32,13 @@ export interface SourcemapPluginOptions {
     /** The release string the app reports at runtime (`init({ release })`).
      * The maps are matched to events by this exact string. */
     release: string;
-    /** The project DSN; `REALUPTIME_ERRORS_DSN` is read when omitted. */
+    /** The project DSN; `REALUPTIME_ERRORS_DSN` is read when omitted. It names
+     * the project the maps belong to. */
     dsn?: string;
+    /** An API key with Errors write access, which authorises the upload
+     * (`REALUPTIME_API_KEY` when omitted). Keep it in CI secrets; the DSN alone
+     * stops being accepted for uploads on February 17, 2027. */
+    apiKey?: string;
     /** A bare ingest key (`REALUPTIME_ERRORS_INGEST_KEY` when omitted), used
      * with `origin` when no DSN is set. */
     ingestKey?: string;
