@@ -15,7 +15,7 @@ import { MAX_BREADCRUMB_DATA_ENTRIES, MAX_BREADCRUMBS_PER_EVENT, MAX_CONTEXT_ENT
  * none.
  */
 export const SDK_NAME = "realuptime-errors-js";
-export const SDK_VERSION = "0.5.0"; // x-release-please-version
+export const SDK_VERSION = "0.6.0"; // x-release-please-version
 /** How long the one-time rules fetch may take before the SDK stops waiting
  * for it (it was never blocking capture anyway). */
 export const SCRUB_RULES_TIMEOUT_MS = 5_000;

@@ -1,6 +1,6 @@
 {
   "name": "@realuptime/errors",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Zero-dependency error tracking SDK for JavaScript and Node (RealUptime Errors).",
   "type": "module",
   "main": "./dist/index.js",

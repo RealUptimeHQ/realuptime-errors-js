@@ -107,7 +107,7 @@ extra build step or type-stripping flag on the consumer's side.
 
 ## Version
 
-This mirror tracks SDK_VERSION `0.5.0` in `index.ts`, the string every
+This mirror tracks SDK_VERSION `0.6.0` in `index.ts`, the string every
 event actually carries on the wire.
 
 ## Running the tests

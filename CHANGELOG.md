@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 (2026-11-13)
+
+
+### Features
+
+* **errors-js:** source-map uploads send an API key and print the server's warning
+
+
+### Bug Fixes
+
+* **errors:** scrub credential values in name=value text and query strings (REA-1260)
+
 ## 0.5.0 (2026-11-08)
 
 ### Features

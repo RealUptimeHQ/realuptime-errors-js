@@ -15,7 +15,7 @@ import { type ErrorLevel, type WireEvent, type WireFrame, type WireRequest, type
  * none.
  */
 export declare const SDK_NAME = "realuptime-errors-js";
-export declare const SDK_VERSION = "0.5.0";
+export declare const SDK_VERSION = "0.6.0";
 /** How long the one-time rules fetch may take before the SDK stops waiting
  * for it (it was never blocking capture anyway). */
 export declare const SCRUB_RULES_TIMEOUT_MS = 5000;
