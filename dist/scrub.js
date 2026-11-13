@@ -73,6 +73,12 @@ const AWS_KEY_RE = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
 const CARD_RE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g;
 const HEX_RE = /\b[0-9a-fA-F]{32,}\b/g;
 const BASE64_RE = /(?<![A-Za-z0-9+_=-])[A-Za-z0-9+_-]{40,}={0,2}/g;
+// name=value pairs in free text, paths and query strings (REA-1260): the
+// value is scrubbed when the name hits the key-name denylist. No spaces
+// around "=", so "token = x" in prose is not a pair. Linear time: the name
+// is bounded and the value class excludes every delimiter, and "[scrubbed]"
+// is itself a valid value, so scrubbing twice changes nothing.
+const KEY_VALUE_RE = /([A-Za-z0-9_.[\]-]{1,64})=([^&#;,"'<>\s]+)/g;
 /** Key-name denylist (REA-474): normalized (lowercased, separator-joined)
  * segments that mark a field as sensitive by name alone, regardless of what
  * its value looks like. Kept as single normalized words/compounds so a
@@ -91,6 +97,14 @@ const KEY_DENYLIST = new Set([
     "privatekey",
     "accesskey",
     "session",
+    // REA-1260: names that carry credentials in query strings and form text.
+    "pw",
+    "pwd",
+    "passphrase",
+    "sig",
+    "signature",
+    "sid",
+    "otp",
 ]);
 /** Splits a key into lowercase segments on camelCase boundaries and any
  * non-alphanumeric separator (snake_case, kebab-case, dotted). */
@@ -145,6 +159,7 @@ export function scrubString(value) {
     });
     out = out.replace(HEX_RE, SCRUBBED);
     out = out.replace(BASE64_RE, SCRUBBED);
+    out = out.replace(KEY_VALUE_RE, (pair, key) => isKeyDenylisted(key) ? `${key}=${SCRUBBED}` : pair);
     return out;
 }
 function scrubRequest(request, allowFields) {
